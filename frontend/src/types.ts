@@ -66,3 +66,46 @@ export interface SearchResponse {
   limit: number;
   offset: number;
 }
+
+export interface TopDeal extends Deal {
+  id?: number;
+  calc_ppsqm?: number | null;
+}
+
+export interface TopDealsStats {
+  highest_deal?: {
+    id: number;
+    date: string;
+    amount: number;
+    nature: string;
+    settlement: string;
+    area_sqm: number;
+    rooms: number;
+    gush: string;
+    helka: string;
+    calc_ppsqm?: number | null;
+  } | null;
+  highest_ppsqm_deal?: {
+    id: number;
+    date: string;
+    amount: number;
+    nature: string;
+    settlement: string;
+    area_sqm: number;
+    rooms: number;
+    gush: string;
+    helka: string;
+    calc_ppsqm?: number | null;
+  } | null;
+  avg_top_amount: number;
+  top_cities: Array<{ settlement: string; count: number }>;
+}
+
+export interface TopDealsResponse {
+  data: TopDeal[];
+  total: number;
+  limit: number;
+  offset: number;
+  stats: TopDealsStats;
+}
+

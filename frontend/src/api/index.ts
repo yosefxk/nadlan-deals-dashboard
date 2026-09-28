@@ -1,4 +1,4 @@
-import { Stats, SettlementSummary, NatureSummary, SearchResponse, SeriesPoint, CompareResult, Deal } from '../types';
+import { Stats, SettlementSummary, NatureSummary, SearchResponse, SeriesPoint, CompareResult, Deal, TopDealsResponse } from '../types';
 
 const API_BASE = '/api';
 
@@ -96,3 +96,14 @@ export interface OmniResult {
 export async function fetchOmnisearch(q: string): Promise<{ results: OmniResult[] }> {
   return fetchJson<{ results: OmniResult[] }>(`${API_BASE}/omnisearch?q=${encodeURIComponent(q)}`);
 }
+
+export async function fetchTopDeals(params: Record<string, string | number>): Promise<TopDealsResponse> {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') {
+      searchParams.append(k, String(v));
+    }
+  });
+  return fetchJson<TopDealsResponse>(`${API_BASE}/top-deals?${searchParams.toString()}`);
+}
+

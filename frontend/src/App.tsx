@@ -7,6 +7,7 @@ import SettlementDeepDive from './pages/SettlementDeepDive';
 import MapPage from './pages/MapPage';
 import ParcelDetail from './pages/ParcelDetail';
 import Compare from './pages/Compare';
+import TopDeals from './pages/TopDeals';
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
       <Route path="/" element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="search" element={<Search />} />
+        <Route path="top-deals" element={<TopDeals />} />
         <Route path="trends" element={<Trends />} />
         <Route path="settlement/:name" element={<SettlementDeepDive />} />
         <Route path="map" element={<MapPage />} />

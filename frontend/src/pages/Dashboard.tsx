@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchStats, fetchSeries, fetchSettlements, fetchOmnisearch } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, Building, Home, ArrowLeft } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Search, MapPin, Building, Home, ArrowLeft, Trophy } from 'lucide-react';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -116,7 +116,14 @@ export default function Dashboard() {
         </form>
 
         {/* Quick Example Links */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mt-2 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-2.5 text-xs text-slate-500">
+          <Link
+            to="/top-deals"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 font-bold hover:bg-amber-200 transition-colors shadow-2xs"
+          >
+            <Trophy size={13} className="text-amber-600" />
+            <span>עסקאות שיא</span>
+          </Link>
           <span className="text-slate-400">לדוגמה:</span>
           <button onClick={() => navigate('/settlement/תל אביב -יפו')} className="hover:text-indigo-600 underline">תל אביב</button>
           <button onClick={() => navigate('/settlement/ירושלים')} className="hover:text-indigo-600 underline">ירושלים</button>

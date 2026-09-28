@@ -333,3 +333,148 @@ async def get_settlement_profile(
         "recent_deals": recent,
     }
 
+@router.get("/top-deals")
+async def get_top_deals(
+    settlement: Optional[str] = None,
+    nature: Optional[str] = None,
+    street: Optional[str] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+    sort: str = "amount_desc",
+    limit: int = Query(50, le=200),
+    offset: int = 0,
+    conn: aiosqlite.Connection = Depends(get_db)
+):
+    clauses = ["amount > 0", "settlement IS NOT NULL", "settlement != ''"]
+    params = []
+
+    if settlement:
+        clauses.append("settlement = ?")
+        params.append(settlement)
+
+    if nature:
+        if nature == 'apartments':
+            clauses.append("nature LIKE '%דירה%'")
+        elif nature == 'houses':
+            clauses.append("(nature LIKE '%בית%' OR nature LIKE '%קוטג%')")
+        elif nature == 'commercial':
+            clauses.append("(nature LIKE '%מסחר%' OR nature LIKE '%משרד%' OR nature LIKE '%חנות%' OR nature LIKE '%תעשי%')")
+        else:
+            clauses.append("nature = ?")
+            params.append(nature)
+
+    if street:
+        clauses.append("(addresses LIKE ? OR settlement LIKE ?)")
+        params.extend([f"%{street}%", f"%{street}%"])
+
+    if min_year:
+        clauses.append("year >= ?")
+        params.append(min_year)
+
+    if max_year:
+        clauses.append("year <= ?")
+        params.append(max_year)
+
+    if sort == "ppsqm_desc":
+        clauses.append("amount >= 500000")
+        clauses.append("area_sqm >= 25")
+        order_by = "(amount / area_sqm) DESC"
+    else:
+        order_by = "amount DESC"
+
+    where_clause = " AND ".join(clauses)
+
+    # 1. Fetch ranking rows
+    data_query = f"""
+        SELECT id, date, amount, declared_amount, nature, area_sqm, rooms, year_built,
+               portion, portion_fraction, price_per_sqm, price_per_sqm_normalized,
+               sub_parcel, settlement, settlement_code, gush, helka, addresses, addresses_total, year, floor,
+               ROUND(CASE WHEN area_sqm >= 10 THEN (amount / area_sqm) ELSE price_per_sqm_normalized END) as calc_ppsqm
+        FROM deals
+        WHERE {where_clause}
+        ORDER BY {order_by}
+        LIMIT ? OFFSET ?
+    """
+    async with conn.execute(data_query, params + [limit, offset]) as cur:
+        rows = await cur.fetchall()
+        data = [dict(row) for row in rows]
+
+    # 2. Count total
+    count_query = f"SELECT COUNT(*) as cnt FROM deals WHERE {where_clause}"
+    async with conn.execute(count_query, params) as cur:
+        count_row = await cur.fetchone()
+        total = count_row["cnt"] if count_row else 0
+
+    # 3. Overall luxury highlights for current filter
+    highest_deal = None
+    highest_ppsqm_deal = None
+    avg_top_amount = 0
+
+    if data:
+        avg_top_amount = round(sum(d["amount"] for d in data if d.get("amount")) / len(data))
+
+    # Highest total amount deal
+    h_query = f"""
+        SELECT id, date, amount, nature, settlement, area_sqm, rooms, gush, helka,
+               ROUND(CASE WHEN area_sqm >= 10 THEN (amount / area_sqm) ELSE price_per_sqm_normalized END) as calc_ppsqm
+        FROM deals
+        WHERE {where_clause}
+        ORDER BY amount DESC
+        LIMIT 1
+    """
+    async with conn.execute(h_query, params) as cur:
+        h_row = await cur.fetchone()
+        if h_row:
+            highest_deal = dict(h_row)
+
+    # Highest price per sqm deal
+    h_ppsqm_clauses = list(clauses)
+    if "area_sqm >= 25" not in h_ppsqm_clauses:
+        h_ppsqm_clauses.append("area_sqm >= 25")
+    if "amount >= 500000" not in h_ppsqm_clauses:
+        h_ppsqm_clauses.append("amount >= 500000")
+    h_ppsqm_where = " AND ".join(h_ppsqm_clauses)
+    pp_query = f"""
+        SELECT id, date, amount, nature, settlement, area_sqm, rooms, gush, helka,
+               ROUND(amount / area_sqm) as calc_ppsqm
+        FROM deals
+        WHERE {h_ppsqm_where}
+        ORDER BY (amount / area_sqm) DESC
+        LIMIT 1
+    """
+    async with conn.execute(pp_query, params) as cur:
+        pp_row = await cur.fetchone()
+        if pp_row:
+            highest_ppsqm_deal = dict(pp_row)
+
+    # Top cities for top deals in this filter
+    top_cities_query = f"""
+        SELECT settlement, COUNT(*) as count
+        FROM (
+            SELECT settlement FROM deals
+            WHERE {where_clause}
+            ORDER BY {order_by}
+            LIMIT 100
+        )
+        GROUP BY settlement
+        ORDER BY count DESC
+        LIMIT 6
+    """
+    async with conn.execute(top_cities_query, params) as cur:
+        c_rows = await cur.fetchall()
+        top_cities = [dict(r) for r in c_rows]
+
+    return {
+        "data": data,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "stats": {
+            "highest_deal": highest_deal,
+            "highest_ppsqm_deal": highest_ppsqm_deal,
+            "avg_top_amount": avg_top_amount,
+            "top_cities": top_cities
+        }
+    }
+
+
