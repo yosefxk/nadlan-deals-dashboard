@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/api/index.ts","./src/components/Layout.tsx","./src/components/Navigation.tsx","./src/pages/Compare.tsx","./src/pages/Dashboard.tsx","./src/pages/MapPage.tsx","./src/pages/ParcelDetail.tsx","./src/pages/Search.tsx","./src/pages/SettlementDeepDive.tsx","./src/pages/Trends.tsx"],"version":"5.9.3"}
