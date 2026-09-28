@@ -2,7 +2,11 @@ import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Search, TrendingUp, Map as MapIcon, BarChart2 } from 'lucide-react';
 import clsx from 'clsx';
 
-export default function Navigation() {
+interface NavigationProps {
+  onNavigate?: () => void;
+}
+
+export default function Navigation({ onNavigate }: NavigationProps) {
   const navItems = [
     { to: '/', label: 'לוח מחוונים', icon: LayoutDashboard },
     { to: '/search', label: 'חיפוש', icon: Search },
@@ -12,7 +16,7 @@ export default function Navigation() {
   ];
 
   return (
-    <nav className="w-64 bg-indigo-900 text-white min-h-screen flex flex-col hidden md:flex shrink-0">
+    <nav className="w-64 bg-indigo-900 text-white min-h-screen flex flex-col shrink-0">
       <div className="p-6 border-b border-indigo-800/60 mb-2">
         <h1 className="text-2xl font-bold tracking-tight">עסקאות נדל״ן</h1>
         <p className="text-xs text-indigo-300 mt-1 font-medium tracking-wide">hosted by BaileyTV</p>
@@ -22,6 +26,7 @@ export default function Navigation() {
           <NavLink
             key={item.to}
             to={item.to}
+            onClick={onNavigate}
             className={({ isActive }) =>
               clsx(
                 'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',

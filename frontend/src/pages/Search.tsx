@@ -44,14 +44,56 @@ export default function Search() {
         <h2 className="text-xl font-bold mb-6">סינון תוצאות</h2>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">יישוב</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">חיפוש חופשי</label>
             <input
               type="text"
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              placeholder="עיר, רחוב, גוש/חלקה..."
+              value={currentParams.q || ''}
+              onChange={(e) => handleFilterChange('q', e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">יישוב / עיר</label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               placeholder="שם יישוב..."
               value={currentParams.settlement || ''}
               onChange={(e) => handleFilterChange('settlement', e.target.value)}
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">רחוב</label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              placeholder="שם רחוב..."
+              value={currentParams.street || ''}
+              onChange={(e) => handleFilterChange('street', e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">גוש</label>
+              <input
+                type="text"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                placeholder="מספר גוש..."
+                value={currentParams.gush || ''}
+                onChange={(e) => handleFilterChange('gush', e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">חלקה</label>
+              <input
+                type="text"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                placeholder="מספר חלקה..."
+                value={currentParams.helka || ''}
+                onChange={(e) => handleFilterChange('helka', e.target.value)}
+              />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">סוג נכס</label>
@@ -86,6 +128,14 @@ export default function Search() {
               <input type="date" className="w-full px-3 py-2 border border-slate-200 rounded-lg" value={currentParams.date_to || ''} onChange={(e) => handleFilterChange('date_to', e.target.value)} />
             </div>
           </div>
+          {Object.keys(currentParams).length > 0 && (
+            <button
+              onClick={() => setSearchParams({})}
+              className="w-full py-2 text-xs font-semibold text-slate-500 hover:text-red-600 border border-slate-200 hover:border-red-200 rounded-lg transition-colors"
+            >
+              איפוס כל הסינונים
+            </button>
+          )}
         </div>
       </div>
 

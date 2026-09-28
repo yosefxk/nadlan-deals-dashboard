@@ -84,3 +84,15 @@ export async function autocomplete(q: string): Promise<{ data: { settlement: str
 export async function fetchSettlementDetail(name: string): Promise<any> {
   return fetchJson<any>(`${API_BASE}/settlement/${encodeURIComponent(name)}`);
 }
+
+export interface OmniResult {
+  category: string;
+  type: string;
+  title: string;
+  subtitle?: string;
+  url: string;
+}
+
+export async function fetchOmnisearch(q: string): Promise<{ results: OmniResult[] }> {
+  return fetchJson<{ results: OmniResult[] }>(`${API_BASE}/omnisearch?q=${encodeURIComponent(q)}`);
+}

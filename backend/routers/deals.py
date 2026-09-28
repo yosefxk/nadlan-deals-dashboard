@@ -3,11 +3,34 @@ from typing import Optional, List
 from database import get_db
 from models import SearchResponse, DealRow
 import aiosqlite
+import httpx
+import re
 
 router = APIRouter(prefix="/api")
 
+async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None) -> list[tuple[str, str]]:
+    params = {"city": settlement, "street": street}
+    if house:
+        params["number"] = house
+    try:
+        async with httpx.AsyncClient(timeout=2.5) as client:
+            resp = await client.get("https://www.over.org.il/api/nadlan/address", params=params)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                pairs = []
+                for p in data:
+                    ident = p.get("identity", {})
+                    g, h = ident.get("gush"), ident.get("helka")
+                    if g and h:
+                        pairs.append((str(g), str(h)))
+                return pairs
+    except Exception:
+        pass
+    return []
+
 @router.get("/search", response_model=SearchResponse)
 async def search_deals(
+    q: Optional[str] = None,
     settlement: Optional[str] = None,
     settlement_code: Optional[str] = None,
     gush: Optional[str] = None,
@@ -29,6 +52,20 @@ async def search_deals(
 ):
     query_parts = []
     params = []
+
+    # Free text search across attributes
+    if q:
+        q_clean = q.strip()
+        gh_match = re.search(r'(\d{4,8})[\s/]+(\d{1,5})', q_clean)
+        if gh_match:
+            query_parts.append("(gush = ? AND helka = ?)")
+            params.extend([gh_match.group(1), gh_match.group(2)])
+        elif q_clean.isdigit():
+            query_parts.append("(gush = ? OR helka = ? OR settlement_code = ?)")
+            params.extend([q_clean, q_clean, q_clean])
+        else:
+            query_parts.append("(settlement LIKE ? OR nature LIKE ?)")
+            params.extend([f"%{q_clean}%", f"%{q_clean}%"])
 
     if settlement:
         query_parts.append("settlement = ?")
@@ -66,9 +103,19 @@ async def search_deals(
     if max_rooms:
         query_parts.append("rooms <= ?")
         params.append(max_rooms)
+
     if street:
-        query_parts.append("addresses LIKE ?")
-        params.append(f"%{street}%")
+        parcels = []
+        if settlement:
+            parcels = await resolve_street_parcels(settlement, street, house)
+        if parcels:
+            parcel_clauses = " OR ".join(["(gush = ? AND helka = ?)"] * len(parcels[:200]))
+            query_parts.append(f"({parcel_clauses})")
+            for g, h in parcels[:200]:
+                params.extend([g, h])
+        else:
+            query_parts.append("(settlement LIKE ? OR addresses LIKE ?)")
+            params.extend([f"%{street}%", f"%{street}%"])
     
     where_clause = " AND ".join(query_parts) if query_parts else "1=1"
     
@@ -111,6 +158,106 @@ async def get_parcel_deals(
         rows = await cur.fetchall()
         data = [dict(row) for row in rows]
         return {"data": data, "total": len(data), "gush": gush, "helka": helka}
+
+@router.get("/omnisearch")
+async def omnisearch(
+    q: str,
+    conn: aiosqlite.Connection = Depends(get_db)
+):
+    q_clean = q.strip()
+    if not q_clean or len(q_clean) < 2:
+        return {"results": []}
+
+    results = []
+
+    # 1. Parcel parsing (e.g. 6903/104 or גוש 6903 חלקה 104)
+    gh_match = re.search(r'(\d{4,8})[\s/]+(\d{1,5})', q_clean)
+    if gh_match:
+        g, h = gh_match.group(1), gh_match.group(2)
+        results.append({
+            "category": "גוש וחלקה",
+            "type": "parcel",
+            "title": f"גוש {g} חלקה {h}",
+            "subtitle": "מעבר ישיר לכל עסקאות החלקה",
+            "url": f"/parcel/{g}/{h}"
+        })
+    elif q_clean.isdigit() and len(q_clean) >= 4:
+        results.append({
+            "category": "גוש",
+            "type": "gush",
+            "title": f"גוש {q_clean}",
+            "subtitle": "סינון עסקאות לפי מספר גוש",
+            "url": f"/search?gush={q_clean}"
+        })
+
+    # 2. Local Database: Settlements matching
+    async with conn.execute(
+        """SELECT settlement, COUNT(*) as deals 
+           FROM deals 
+           WHERE settlement LIKE ? 
+           GROUP BY settlement 
+           ORDER BY deals DESC LIMIT 4""",
+        (f"%{q_clean}%",)
+    ) as cur:
+        for row in await cur.fetchall():
+            results.append({
+                "category": "יישוב / עיר",
+                "type": "settlement",
+                "title": row["settlement"],
+                "subtitle": f"{row['deals']:,} עסקאות מדווחות",
+                "url": f"/settlement/{row['settlement']}"
+            })
+
+    # 3. Streets autocomplete from over.org.il
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(
+                "https://www.over.org.il/api/nadlan/streets",
+                params={"q": q_clean, "limit": 4}
+            )
+            if resp.status_code == 200:
+                for s in resp.json().get("data", []):
+                    st_name = s.get("name")
+                    city_name = s.get("settlement_name")
+                    if st_name and city_name:
+                        results.append({
+                            "category": "רחוב",
+                            "type": "street",
+                            "title": f"רחוב {st_name}",
+                            "subtitle": city_name,
+                            "url": f"/search?settlement={city_name}&street={st_name}"
+                        })
+    except Exception:
+        pass
+
+    # 4. Local Database: Property natures matching
+    async with conn.execute(
+        """SELECT nature, COUNT(*) as deals 
+           FROM deals 
+           WHERE nature LIKE ? 
+           GROUP BY nature 
+           ORDER BY deals DESC LIMIT 2""",
+        (f"%{q_clean}%",)
+    ) as cur:
+        for row in await cur.fetchall():
+            results.append({
+                "category": "סוג נכס",
+                "type": "nature",
+                "title": row["nature"],
+                "subtitle": f"סינון לפי {row['deals']:,} עסקאות מסוג זה",
+                "url": f"/search?nature={row['nature']}"
+            })
+
+    # 5. Universal search fallback
+    results.append({
+        "category": "חיפוש חופשי",
+        "type": "all",
+        "title": f"חפש \"{q_clean}\" בכל המאגר",
+        "subtitle": "חיפוש בכל השדות (עיר, רחוב, גוש/חלקה)",
+        "url": f"/search?q={q_clean}"
+    })
+
+    return {"results": results}
 
 @router.get("/autocomplete")
 async def autocomplete(
