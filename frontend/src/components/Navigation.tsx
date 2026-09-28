@@ -13,8 +13,9 @@ export default function Navigation() {
 
   return (
     <nav className="w-64 bg-indigo-900 text-white min-h-screen flex flex-col hidden md:flex shrink-0">
-      <div className="p-6">
-        <h1 className="text-2xl font-bold">נדל״ן עסקאות</h1>
+      <div className="p-6 border-b border-indigo-800/60 mb-2">
+        <h1 className="text-2xl font-bold tracking-tight">עסקאות נדל״ן</h1>
+        <p className="text-xs text-indigo-300 mt-1 font-medium tracking-wide">hosted by BaileyTV</p>
       </div>
       <div className="flex-1 px-4 space-y-2">
         {navItems.map((item) => (

@@ -30,8 +30,51 @@ export default function Dashboard() {
     enabled: searchQuery.length > 1,
   });
 
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '';
+    try {
+      const [year, month, day] = dateStr.split('-');
+      if (year && month && day) {
+        return `${day}/${month}/${year}`;
+      }
+      return dateStr;
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const dateRangeText = stats?.first_deal && stats?.last_deal
+    ? `${formatDate(stats.first_deal)} — ${formatDate(stats.last_deal)}`
+    : '01/01/1998 — 17/09/2026';
+
   return (
     <div className="space-y-8">
+      {/* Hero Header */}
+      <div className="text-center max-w-3xl mx-auto pt-2 pb-1 space-y-3">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium shadow-xs">
+          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          <span>מאגר עסקאות היסטורי סגור</span>
+          <span>•</span>
+          <span className="font-semibold">{dateRangeText}</span>
+          <span>•</span>
+          <span className="text-amber-800">אינו מתעדכן שוטף</span>
+        </div>
+
+        <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
+          עסקאות נדל״ן
+        </h1>
+        <p className="text-sm font-semibold text-indigo-600 tracking-wide uppercase">
+          hosted by BaileyTV
+        </p>
+
+        <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
+          חיפוש, השוואה וניתוח מגמות של עסקאות מיסוי מקרקעין שדווחו בישראל.
+          <span className="block text-xs text-slate-600 mt-1 font-medium">
+            הנתונים משקפים פרסום חד-פעמי לתקופה {dateRangeText} ואינם כוללים עסקאות חדשות מעבר לתאריך זה.
+          </span>
+        </p>
+      </div>
+
       {/* Search Bar */}
       <div className="relative max-w-2xl mx-auto z-30">
         <div className="relative">

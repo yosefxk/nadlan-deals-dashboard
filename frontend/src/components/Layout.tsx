@@ -9,8 +9,11 @@ export default function Layout() {
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans" dir="rtl">
       {/* Mobile nav toggle */}
-      <div className="md:hidden fixed top-0 right-0 w-full bg-indigo-900 text-white p-4 flex justify-between items-center z-50">
-        <h1 className="text-xl font-bold">נדל״ן עסקאות</h1>
+      <div className="md:hidden fixed top-0 right-0 w-full bg-indigo-900 text-white p-3 px-4 flex justify-between items-center z-50 shadow-md">
+        <div>
+          <h1 className="text-lg font-bold leading-tight">עסקאות נדל״ן</h1>
+          <p className="text-[11px] text-indigo-300 font-medium">hosted by BaileyTV</p>
+        </div>
         <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
           <Menu size={24} />
         </button>
