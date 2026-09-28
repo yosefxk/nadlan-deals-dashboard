@@ -10,7 +10,8 @@ import {
   MapPin, 
   Calendar, 
   Search as SearchIcon, 
-  ExternalLink 
+  ExternalLink,
+  Navigation as NavigationIcon
 } from 'lucide-react';
 import { fetchTopDeals, fetchSettlements } from '../api';
 import clsx from 'clsx';
@@ -93,20 +94,74 @@ export default function TopDeals() {
     updateParam('street', streetInput.trim());
   };
 
-  const formatCurrency = (val?: number | null) => {
-    if (!val) return '—';
+  // Format with exact commas for numbers over 1,000
+  const formatNumberWithCommas = (val?: number | null) => {
+    if (val == null || val === undefined || isNaN(val)) return '—';
+    return Number(val).toLocaleString('he-IL');
+  };
+
+  const formatAmountWithCommas = (val?: number | null) => {
+    if (val == null || val === undefined) return '—';
+    return `₪${Number(val).toLocaleString('he-IL')}`;
+  };
+
+  // Compact abbreviation tag
+  const formatAmountTag = (val?: number | null) => {
+    if (!val) return '';
     if (val >= 1_000_000_000) {
-      return `₪${(val / 1_000_000_000).toFixed(2)} מיליארד`;
+      return `${(val / 1_000_000_000).toFixed(2)} מיליארד ₪`;
     }
     if (val >= 1_000_000) {
-      return `₪${(val / 1_000_000).toFixed(2)} מיליון`;
+      return `${(val / 1_000_000).toFixed(2)} מיליון ₪`;
     }
-    return `₪${val.toLocaleString('he-IL')}`;
+    return '';
   };
 
   const formatPricePerSqm = (val?: number | null) => {
     if (!val) return '—';
     return `₪${Math.round(val).toLocaleString('he-IL')}`;
+  };
+
+  // Generate Google Maps URL
+  const getGoogleMapsUrl = (deal: {
+    lat?: number | null;
+    lon?: number | null;
+    full_address?: string | null;
+    street?: string | null;
+    settlement?: string;
+    gush?: string;
+    helka?: string;
+  }) => {
+    if (deal.lat && deal.lon) {
+      return `https://www.google.com/maps/search/?api=1&query=${deal.lat},${deal.lon}`;
+    }
+    if (deal.full_address) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(deal.full_address)}`;
+    }
+    const parts = [
+      deal.street,
+      deal.settlement,
+      deal.gush ? `גוש ${deal.gush} חלקה ${deal.helka}` : ''
+    ].filter(Boolean);
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(parts.join(' ') || 'ישראל')}`;
+  };
+
+  const getDisplayAddress = (deal: {
+    full_address?: string | null;
+    street?: string | null;
+    house_num?: string | null;
+    settlement?: string;
+    gush?: string;
+    helka?: string;
+  }) => {
+    if (deal.full_address) return deal.full_address;
+    if (deal.street) {
+      return [deal.street, deal.house_num, deal.settlement].filter(Boolean).join(' ');
+    }
+    if (deal.gush && deal.helka) {
+      return `גוש ${deal.gush} חלקה ${deal.helka}, ${deal.settlement || ''}`;
+    }
+    return deal.settlement || '—';
   };
 
   const deals = data?.data || [];
@@ -124,13 +179,13 @@ export default function TopDeals() {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold tracking-wide border border-amber-500/30">
               <Crown size={14} className="text-amber-400" />
-              <span>מועדון האלפיון והעסקאות המובילות</span>
+              <span>מועדון האלפיון והעסקאות המובילות בישראל</span>
             </div>
             <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight">
               עסקאות שיא בנדל״ן
             </h1>
             <p className="text-sm sm:text-base text-indigo-200/90 max-w-2xl leading-relaxed">
-              דירוג העסקאות היקרות ביותר בישראל מתוך מאגר 3.8 מיליון עסקאות רשות המיסים. חפשו לפי עיר, שכונה, סוג נכס, או מיין לפי מחיר כולל ומחיר למ״ר.
+              דירוג העסקאות היקרות ביותר בישראל מתוך מאגר 3.8 מיליון עסקאות רשות המיסים. כולל כתובות מדויקות, קישור ישיר ל-Google Maps, וסינון לפי עיר, רחוב ומחיר למ״ר.
             </p>
           </div>
 
@@ -215,7 +270,7 @@ export default function TopDeals() {
               <option value="">כל היישובים (כל הארץ)</option>
               {settlementsData?.data.map((s) => (
                 <option key={s.settlement} value={s.settlement}>
-                  {s.settlement} ({s.deals.toLocaleString()} עסקאות)
+                  {s.settlement} ({formatNumberWithCommas(s.deals)} עסקאות)
                 </option>
               ))}
             </select>
@@ -249,7 +304,7 @@ export default function TopDeals() {
               <input
                 id={streetInputId}
                 type="text"
-                placeholder="לדוגמה: הירקון, רוטשילד..."
+                placeholder="לדוגמה: הירקון, רוטשילד, זרובבל..."
                 value={streetInput}
                 onChange={(e) => setStreetInput(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -335,17 +390,32 @@ export default function TopDeals() {
               <Trophy size={18} className="text-amber-500" />
             </div>
             <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-extrabold text-amber-950">
-                {formatCurrency(stats.highest_deal?.amount)}
+              <div className="text-2xl sm:text-3xl font-black text-amber-950 font-mono tracking-tight">
+                {formatAmountWithCommas(stats.highest_deal?.amount)}
               </div>
-              <p className="text-xs font-semibold text-amber-800/80 mt-1">
-                {stats.highest_deal?.settlement} • {stats.highest_deal?.nature}
-              </p>
-              {stats.highest_deal?.area_sqm ? (
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {stats.highest_deal.area_sqm} מ״ר • {stats.highest_deal.date}
-                </p>
+              {stats.highest_deal?.amount ? (
+                <span className="inline-block mt-0.5 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-900 text-xs font-bold">
+                  {formatAmountTag(stats.highest_deal.amount)}
+                </span>
               ) : null}
+              <p className="text-xs font-semibold text-amber-800/90 mt-2 flex items-center gap-1">
+                <MapPin size={12} className="shrink-0 text-amber-600" />
+                <span>{getDisplayAddress(stats.highest_deal || {})}</span>
+              </p>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200/60 text-[11px] text-slate-500">
+                <span>{stats.highest_deal?.date}</span>
+                {stats.highest_deal && (
+                  <a
+                    href={getGoogleMapsUrl(stats.highest_deal)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-indigo-700 hover:text-indigo-900 font-bold hover:underline"
+                  >
+                    <span>Google Maps</span>
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
 
@@ -356,15 +426,27 @@ export default function TopDeals() {
               <Flame size={18} className="text-indigo-600" />
             </div>
             <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-extrabold text-indigo-950">
+              <div className="text-2xl sm:text-3xl font-black text-indigo-950 font-mono tracking-tight">
                 {formatPricePerSqm(stats.highest_ppsqm_deal?.calc_ppsqm)} / מ״ר
               </div>
-              <p className="text-xs font-semibold text-indigo-800/80 mt-1">
-                {stats.highest_ppsqm_deal?.settlement} • {stats.highest_ppsqm_deal?.nature}
+              <p className="text-xs font-semibold text-indigo-800/90 mt-2 flex items-center gap-1">
+                <MapPin size={12} className="shrink-0 text-indigo-600" />
+                <span>{getDisplayAddress(stats.highest_ppsqm_deal || {})}</span>
               </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                סכום כולל {formatCurrency(stats.highest_ppsqm_deal?.amount)} • {stats.highest_ppsqm_deal?.date}
-              </p>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-indigo-200/60 text-[11px] text-slate-500">
+                <span>סכום {formatAmountWithCommas(stats.highest_ppsqm_deal?.amount)}</span>
+                {stats.highest_ppsqm_deal && (
+                  <a
+                    href={getGoogleMapsUrl(stats.highest_ppsqm_deal)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-indigo-700 hover:text-indigo-900 font-bold hover:underline"
+                  >
+                    <span>Google Maps</span>
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
 
@@ -380,7 +462,7 @@ export default function TopDeals() {
                   key={tc.settlement}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs font-medium"
                 >
-                  <span className="font-bold">{tc.settlement}:</span> {tc.count} עסקאות
+                  <span className="font-bold">{tc.settlement}:</span> {formatNumberWithCommas(tc.count)} עסקאות
                 </span>
               ))}
             </div>
@@ -393,11 +475,11 @@ export default function TopDeals() {
               <Sparkles size={18} className="text-amber-500" />
             </div>
             <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">
-                {formatCurrency(stats.avg_top_amount)}
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono tracking-tight">
+                {formatAmountWithCommas(stats.avg_top_amount)}
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                ממוצע הדירוג הנוכחי ({deals.length} עסקאות מתוך {data?.total?.toLocaleString()})
+                ממוצע הדירוג ({formatNumberWithCommas(deals.length)} עסקאות מתוך {formatNumberWithCommas(data?.total)})
               </p>
             </div>
           </div>
@@ -433,6 +515,8 @@ export default function TopDeals() {
               const isGold = rank === 1;
               const isSilver = rank === 2;
               const isBronze = rank === 3;
+              const gmapsUrl = getGoogleMapsUrl(deal);
+              const addressText = getDisplayAddress(deal);
 
               return (
                 <div
@@ -445,7 +529,7 @@ export default function TopDeals() {
                   )}
                 >
                   {/* Badge */}
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-3">
                     <span
                       className={clsx(
                         'w-9 h-9 rounded-full flex items-center justify-center font-black text-sm shadow-xs',
@@ -464,14 +548,38 @@ export default function TopDeals() {
 
                   {/* Main Value */}
                   <div className="space-y-1 mb-4">
-                    <div className="text-2xl sm:text-3xl font-extrabold text-slate-950">
-                      {formatCurrency(deal.amount)}
+                    <div className="text-2xl sm:text-3xl font-black text-slate-950 font-mono tracking-tight">
+                      {formatAmountWithCommas(deal.amount)}
                     </div>
+                    {formatAmountTag(deal.amount) ? (
+                      <span className="inline-block text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md">
+                        {formatAmountTag(deal.amount)}
+                      </span>
+                    ) : null}
                     {deal.calc_ppsqm ? (
-                      <div className="text-sm font-bold text-indigo-700">
+                      <div className="text-sm font-bold text-indigo-700 mt-1">
                         {formatPricePerSqm(deal.calc_ppsqm)} למ״ר
                       </div>
                     ) : null}
+                  </div>
+
+                  {/* Address & Google Maps button */}
+                  <div className="mb-4 p-3 bg-white/80 rounded-xl border border-slate-200/70 space-y-2">
+                    <div className="flex items-start gap-1.5 text-xs font-semibold text-slate-800 leading-snug">
+                      <MapPin size={14} className="text-rose-500 shrink-0 mt-0.5" />
+                      <span>{addressText}</span>
+                    </div>
+
+                    <a
+                      href={gmapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 w-full justify-center px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors"
+                    >
+                      <NavigationIcon size={12} />
+                      <span>פתח ב-Google Maps</span>
+                      <ExternalLink size={12} />
+                    </a>
                   </div>
 
                   {/* Details */}
@@ -493,9 +601,9 @@ export default function TopDeals() {
 
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500">שטח וחדרים:</span>
-                      <span className="font-semibold">
-                        {deal.area_sqm ? `${deal.area_sqm} מ״ר` : '—'}
-                        {deal.rooms ? ` • ${deal.rooms} חדרים` : ''}
+                      <span className="font-semibold font-mono">
+                        {deal.area_sqm ? `${formatNumberWithCommas(deal.area_sqm)} מ״ר` : '—'}
+                        {deal.rooms ? ` • ${formatNumberWithCommas(deal.rooms)} חד׳` : ''}
                       </span>
                     </div>
 
@@ -527,10 +635,10 @@ export default function TopDeals() {
           <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-900">
-                טבלת דירוג עסקאות השיא ({data?.total?.toLocaleString()} עסקאות נמצאו)
+                טבלת דירוג עסקאות השיא ({formatNumberWithCommas(data?.total)} עסקאות נמצאו)
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                מציג את {deals.length} העסקאות הראשונות לפי {sort === 'amount_desc' ? 'מחיר כולל' : 'מחיר למ״ר'}
+                מציג את {formatNumberWithCommas(deals.length)} העסקאות הראשונות לפי {sort === 'amount_desc' ? 'מחיר כולל' : 'מחיר למ״ר'}
               </p>
             </div>
 
@@ -558,13 +666,15 @@ export default function TopDeals() {
             <table className="w-full text-right text-sm">
               <thead className="bg-slate-50 text-slate-600 font-semibold text-xs border-b border-slate-200/80">
                 <tr>
-                  <th className="py-3 px-4 w-14 text-center">#</th>
+                  <th className="py-3 px-3 w-12 text-center">#</th>
                   <th className="py-3 px-4">סכום עסקה</th>
                   <th className="py-3 px-4">מחיר למ״ר</th>
                   <th className="py-3 px-4">יישוב</th>
+                  <th className="py-3 px-4">כתובת ומיקום</th>
+                  <th className="py-3 px-3 text-center">Google Maps</th>
                   <th className="py-3 px-4">סוג נכס</th>
                   <th className="py-3 px-4">שטח (מ״ר)</th>
-                  <th className="py-3 px-4">חדרים</th>
+                  <th className="py-3 px-3">חדרים</th>
                   <th className="py-3 px-4">תאריך</th>
                   <th className="py-3 px-4">גוש / חלקה</th>
                 </tr>
@@ -572,12 +682,15 @@ export default function TopDeals() {
               <tbody className="divide-y divide-slate-100">
                 {deals.map((deal, idx) => {
                   const rank = idx + 1;
+                  const gmapsUrl = getGoogleMapsUrl(deal);
+                  const addressText = getDisplayAddress(deal);
+
                   return (
                     <tr
                       key={deal.id || `${deal.gush}-${deal.helka}-${deal.date}-${idx}`}
                       className="hover:bg-indigo-50/40 transition-colors group"
                     >
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3 px-3 text-center">
                         <span
                           className={clsx(
                             'inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold',
@@ -591,15 +704,25 @@ export default function TopDeals() {
                         </span>
                       </td>
 
-                      <td className="py-3 px-4 font-black text-slate-900 group-hover:text-indigo-900">
-                        {formatCurrency(deal.amount)}
+                      {/* Amount with commas and tag */}
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="font-black text-slate-900 font-mono tracking-tight group-hover:text-indigo-900">
+                          {formatAmountWithCommas(deal.amount)}
+                        </div>
+                        {formatAmountTag(deal.amount) ? (
+                          <div className="text-[11px] text-amber-700 font-semibold mt-0.5">
+                            {formatAmountTag(deal.amount)}
+                          </div>
+                        ) : null}
                       </td>
 
-                      <td className="py-3 px-4 font-bold text-indigo-700">
+                      {/* Price per sqm with commas */}
+                      <td className="py-3 px-4 font-bold text-indigo-700 font-mono whitespace-nowrap">
                         {formatPricePerSqm(deal.calc_ppsqm)}
                       </td>
 
-                      <td className="py-3 px-4">
+                      {/* Settlement */}
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <Link
                           to={`/settlement/${encodeURIComponent(deal.settlement)}`}
                           className="font-semibold text-slate-800 hover:text-indigo-600 hover:underline"
@@ -608,23 +731,50 @@ export default function TopDeals() {
                         </Link>
                       </td>
 
-                      <td className="py-3 px-4 text-slate-600">
+                      {/* Address */}
+                      <td className="py-3 px-4 max-w-xs text-xs">
+                        <div className="flex items-center gap-1 font-medium text-slate-800 line-clamp-2">
+                          <MapPin size={12} className="text-rose-500 shrink-0" />
+                          <span>{addressText}</span>
+                        </div>
+                      </td>
+
+                      {/* Google Maps Link Button */}
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <a
+                          href={gmapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 font-bold text-xs border border-emerald-200 transition-colors shadow-2xs"
+                          title="פתח מיקום מדויק ב-Google Maps"
+                        >
+                          <NavigationIcon size={12} />
+                          <span>מפה ↗</span>
+                        </a>
+                      </td>
+
+                      {/* Nature */}
+                      <td className="py-3 px-4 text-slate-600 text-xs whitespace-nowrap">
                         {deal.nature || '—'}
                       </td>
 
-                      <td className="py-3 px-4 font-medium text-slate-700">
-                        {deal.area_sqm ? `${deal.area_sqm}` : '—'}
+                      {/* Area with commas */}
+                      <td className="py-3 px-4 font-semibold text-slate-700 font-mono whitespace-nowrap">
+                        {deal.area_sqm ? formatNumberWithCommas(deal.area_sqm) : '—'}
                       </td>
 
-                      <td className="py-3 px-4 font-medium text-slate-700">
-                        {deal.rooms ? `${deal.rooms}` : '—'}
+                      {/* Rooms */}
+                      <td className="py-3 px-3 font-semibold text-slate-700 font-mono text-center whitespace-nowrap">
+                        {deal.rooms ? formatNumberWithCommas(deal.rooms) : '—'}
                       </td>
 
-                      <td className="py-3 px-4 text-slate-500 text-xs">
+                      {/* Date */}
+                      <td className="py-3 px-4 text-slate-500 text-xs whitespace-nowrap font-mono">
                         {deal.date}
                       </td>
 
-                      <td className="py-3 px-4">
+                      {/* Gush / Helka */}
+                      <td className="py-3 px-4 whitespace-nowrap">
                         {deal.gush && deal.helka ? (
                           <Link
                             to={`/parcel/${deal.gush}/${deal.helka}`}

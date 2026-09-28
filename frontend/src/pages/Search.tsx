@@ -176,9 +176,9 @@ export default function Search() {
                       </button>
                     </td>
                     <td className="py-3 px-4">{deal.nature}</td>
-                    <td className="py-3 px-4 font-medium">₪{deal.amount.toLocaleString('he-IL')}</td>
-                    <td className="py-3 px-4">{deal.area_sqm || '-'}</td>
-                    <td className="py-3 px-4">{deal.rooms || '-'}</td>
+                    <td className="py-3 px-4 font-medium">₪{deal.amount ? deal.amount.toLocaleString('he-IL') : '-'}</td>
+                    <td className="py-3 px-4">{deal.area_sqm ? deal.area_sqm.toLocaleString('he-IL') : '-'}</td>
+                    <td className="py-3 px-4">{deal.rooms ? deal.rooms.toLocaleString('he-IL') : '-'}</td>
                     <td className="py-3 px-4">
                       {deal.gush && deal.helka ? (
                         <button onClick={() => navigate(`/parcel/${deal.gush}/${deal.helka}`)} className="text-indigo-600 hover:underline">

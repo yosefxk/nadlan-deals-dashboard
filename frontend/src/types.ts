@@ -70,6 +70,11 @@ export interface SearchResponse {
 export interface TopDeal extends Deal {
   id?: number;
   calc_ppsqm?: number | null;
+  full_address?: string | null;
+  street?: string | null;
+  house_num?: string | null;
+  lat?: number | null;
+  lon?: number | null;
 }
 
 export interface TopDealsStats {
@@ -84,6 +89,10 @@ export interface TopDealsStats {
     gush: string;
     helka: string;
     calc_ppsqm?: number | null;
+    full_address?: string | null;
+    street?: string | null;
+    lat?: number | null;
+    lon?: number | null;
   } | null;
   highest_ppsqm_deal?: {
     id: number;
@@ -96,6 +105,10 @@ export interface TopDealsStats {
     gush: string;
     helka: string;
     calc_ppsqm?: number | null;
+    full_address?: string | null;
+    street?: string | null;
+    lat?: number | null;
+    lon?: number | null;
   } | null;
   avg_top_amount: number;
   top_cities: Array<{ settlement: string; count: number }>;

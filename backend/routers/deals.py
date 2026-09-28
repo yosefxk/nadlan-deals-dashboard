@@ -345,52 +345,54 @@ async def get_top_deals(
     offset: int = 0,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
-    clauses = ["amount > 0", "settlement IS NOT NULL", "settlement != ''"]
+    clauses = ["d.amount > 0", "d.settlement IS NOT NULL", "d.settlement != ''"]
     params = []
 
     if settlement:
-        clauses.append("settlement = ?")
+        clauses.append("d.settlement = ?")
         params.append(settlement)
 
     if nature:
         if nature == 'apartments':
-            clauses.append("nature LIKE '%דירה%'")
+            clauses.append("d.nature LIKE '%דירה%'")
         elif nature == 'houses':
-            clauses.append("(nature LIKE '%בית%' OR nature LIKE '%קוטג%')")
+            clauses.append("(d.nature LIKE '%בית%' OR d.nature LIKE '%קוטג%')")
         elif nature == 'commercial':
-            clauses.append("(nature LIKE '%מסחר%' OR nature LIKE '%משרד%' OR nature LIKE '%חנות%' OR nature LIKE '%תעשי%')")
+            clauses.append("(d.nature LIKE '%מסחר%' OR d.nature LIKE '%משרד%' OR d.nature LIKE '%חנות%' OR d.nature LIKE '%תעשי%')")
         else:
-            clauses.append("nature = ?")
+            clauses.append("d.nature = ?")
             params.append(nature)
 
     if street:
-        clauses.append("(addresses LIKE ? OR settlement LIKE ?)")
-        params.extend([f"%{street}%", f"%{street}%"])
+        clauses.append("(pa.full_address LIKE ? OR pa.street LIKE ? OR d.settlement LIKE ?)")
+        params.extend([f"%{street}%", f"%{street}%", f"%{street}%"])
 
     if min_year:
-        clauses.append("year >= ?")
+        clauses.append("d.year >= ?")
         params.append(min_year)
 
     if max_year:
-        clauses.append("year <= ?")
+        clauses.append("d.year <= ?")
         params.append(max_year)
 
     if sort == "ppsqm_desc":
-        clauses.append("amount >= 500000")
-        clauses.append("area_sqm >= 25")
-        order_by = "(amount / area_sqm) DESC"
+        clauses.append("d.amount >= 500000")
+        clauses.append("d.area_sqm >= 25")
+        order_by = "(d.amount / d.area_sqm) DESC"
     else:
-        order_by = "amount DESC"
+        order_by = "d.amount DESC"
 
     where_clause = " AND ".join(clauses)
 
-    # 1. Fetch ranking rows
+    # 1. Fetch ranking rows with address and coordinates
     data_query = f"""
-        SELECT id, date, amount, declared_amount, nature, area_sqm, rooms, year_built,
-               portion, portion_fraction, price_per_sqm, price_per_sqm_normalized,
-               sub_parcel, settlement, settlement_code, gush, helka, addresses, addresses_total, year, floor,
-               ROUND(CASE WHEN area_sqm >= 10 THEN (amount / area_sqm) ELSE price_per_sqm_normalized END) as calc_ppsqm
-        FROM deals
+        SELECT d.id, d.date, d.amount, d.declared_amount, d.nature, d.area_sqm, d.rooms, d.year_built,
+               d.portion, d.portion_fraction, d.price_per_sqm, d.price_per_sqm_normalized,
+               d.sub_parcel, d.settlement, d.settlement_code, d.gush, d.helka, d.year, d.floor,
+               ROUND(CASE WHEN d.area_sqm >= 10 THEN (d.amount / d.area_sqm) ELSE d.price_per_sqm_normalized END) as calc_ppsqm,
+               pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
+        FROM deals d
+        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
         WHERE {where_clause}
         ORDER BY {order_by}
         LIMIT ? OFFSET ?
@@ -400,7 +402,7 @@ async def get_top_deals(
         data = [dict(row) for row in rows]
 
     # 2. Count total
-    count_query = f"SELECT COUNT(*) as cnt FROM deals WHERE {where_clause}"
+    count_query = f"SELECT COUNT(*) as cnt FROM deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka) WHERE {where_clause}"
     async with conn.execute(count_query, params) as cur:
         count_row = await cur.fetchone()
         total = count_row["cnt"] if count_row else 0
@@ -415,11 +417,13 @@ async def get_top_deals(
 
     # Highest total amount deal
     h_query = f"""
-        SELECT id, date, amount, nature, settlement, area_sqm, rooms, gush, helka,
-               ROUND(CASE WHEN area_sqm >= 10 THEN (amount / area_sqm) ELSE price_per_sqm_normalized END) as calc_ppsqm
-        FROM deals
+        SELECT d.id, d.date, d.amount, d.nature, d.settlement, d.area_sqm, d.rooms, d.gush, d.helka,
+               ROUND(CASE WHEN d.area_sqm >= 10 THEN (d.amount / d.area_sqm) ELSE d.price_per_sqm_normalized END) as calc_ppsqm,
+               pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
+        FROM deals d
+        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
         WHERE {where_clause}
-        ORDER BY amount DESC
+        ORDER BY d.amount DESC
         LIMIT 1
     """
     async with conn.execute(h_query, params) as cur:
@@ -429,17 +433,19 @@ async def get_top_deals(
 
     # Highest price per sqm deal
     h_ppsqm_clauses = list(clauses)
-    if "area_sqm >= 25" not in h_ppsqm_clauses:
-        h_ppsqm_clauses.append("area_sqm >= 25")
-    if "amount >= 500000" not in h_ppsqm_clauses:
-        h_ppsqm_clauses.append("amount >= 500000")
+    if "d.area_sqm >= 25" not in h_ppsqm_clauses:
+        h_ppsqm_clauses.append("d.area_sqm >= 25")
+    if "d.amount >= 500000" not in h_ppsqm_clauses:
+        h_ppsqm_clauses.append("d.amount >= 500000")
     h_ppsqm_where = " AND ".join(h_ppsqm_clauses)
     pp_query = f"""
-        SELECT id, date, amount, nature, settlement, area_sqm, rooms, gush, helka,
-               ROUND(amount / area_sqm) as calc_ppsqm
-        FROM deals
+        SELECT d.id, d.date, d.amount, d.nature, d.settlement, d.area_sqm, d.rooms, d.gush, d.helka,
+               ROUND(d.amount / d.area_sqm) as calc_ppsqm,
+               pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
+        FROM deals d
+        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
         WHERE {h_ppsqm_where}
-        ORDER BY (amount / area_sqm) DESC
+        ORDER BY (d.amount / d.area_sqm) DESC
         LIMIT 1
     """
     async with conn.execute(pp_query, params) as cur:
@@ -451,7 +457,8 @@ async def get_top_deals(
     top_cities_query = f"""
         SELECT settlement, COUNT(*) as count
         FROM (
-            SELECT settlement FROM deals
+            SELECT d.settlement FROM deals d
+            LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
             WHERE {where_clause}
             ORDER BY {order_by}
             LIMIT 100
@@ -476,5 +483,6 @@ async def get_top_deals(
             "top_cities": top_cities
         }
     }
+
 
 
