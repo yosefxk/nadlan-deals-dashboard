@@ -23,8 +23,8 @@ DATASET_ID = "fd06f5ae-8a4f-4120-b275-8a514ad23499"
 TABLE_NAME = "append_taxes_nadlan_full_f41fb496_fd06f5ae"
 SQL_URL = f"https://www.over.org.il/api/append/{DATASET_ID}/sql"
 BATCH_SIZE = 1000
-MAX_RETRIES = 8
-RETRY_DELAY = 5
+MAX_RETRIES = 25
+RETRY_DELAY = 10
 
 logging.basicConfig(
     level=logging.INFO,
@@ -155,9 +155,9 @@ def fetch_batch_sql(client: httpx.Client, last_row_hash: str | None = None) -> l
                 json={"sql": sql},
                 timeout=45.0,
             )
-            if resp.status_code == 429:
-                wait = RETRY_DELAY * attempt
-                log.warning(f"Rate limited (429). Retrying in {wait}s...")
+            if resp.status_code in (429, 500, 502, 503, 504):
+                wait = min(RETRY_DELAY * attempt, 60)
+                log.warning(f"Server returned {resp.status_code}. Waiting {wait}s... (attempt {attempt}/{MAX_RETRIES})")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -166,7 +166,7 @@ def fetch_batch_sql(client: httpx.Client, last_row_hash: str | None = None) -> l
         except (httpx.HTTPError, httpx.TimeoutException, json.JSONDecodeError) as e:
             if attempt == MAX_RETRIES:
                 raise
-            wait = RETRY_DELAY * attempt
+            wait = min(RETRY_DELAY * attempt, 60)
             log.warning(f"Query failed ({e}), retry {attempt}/{MAX_RETRIES} in {wait}s...")
             time.sleep(wait)
     return []
@@ -367,8 +367,8 @@ def main():
                 log.info("Reached end of table dataset.")
                 break
 
-            # Politeness pause
-            time.sleep(0.1)
+            # Politeness pause to avoid 429
+            time.sleep(0.35)
 
     except KeyboardInterrupt:
         log.info("\nIngestion paused by user. Checkpoint saved.")
