@@ -100,7 +100,7 @@ async def search_deals(
         offset=offset
     )
 
-@router.get("/parcel/{gush}/{helka}", response_model=List[DealRow])
+@router.get("/parcel/{gush}/{helka}")
 async def get_parcel_deals(
     gush: str,
     helka: str,
@@ -109,7 +109,8 @@ async def get_parcel_deals(
     query = "SELECT * FROM deals WHERE gush = ? AND helka = ? ORDER BY date DESC"
     async with conn.execute(query, (gush, helka)) as cur:
         rows = await cur.fetchall()
-        return [dict(row) for row in rows]
+        data = [dict(row) for row in rows]
+        return {"data": data, "total": len(data), "gush": gush, "helka": helka}
 
 @router.get("/autocomplete")
 async def autocomplete(

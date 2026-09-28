@@ -41,7 +41,7 @@ async def get_series(
         data = [dict(row) for row in rows if row['year'] is not None]
         return SeriesResponse(data=data, count=len(data))
 
-@router.get("/compare", response_model=List[CompareItem])
+@router.get("/compare")
 async def compare_years(
     year_from: int,
     year_to: int,
@@ -118,9 +118,9 @@ async def compare_years(
     elif order == "ppsqm_change_desc":
         items.sort(key=lambda x: x["ppsqm_change_pct"] or -9999, reverse=True)
         
-    return items[:limit]
+    return {"data": items[:limit]}
 
-@router.get("/breakdown", response_model=List[BreakdownItem])
+@router.get("/breakdown")
 async def get_breakdown(
     settlement: str,
     conn: aiosqlite.Connection = Depends(get_db)
@@ -136,4 +136,4 @@ async def get_breakdown(
     """
     async with conn.execute(query, (settlement,)) as cur:
         rows = await cur.fetchall()
-        return [dict(row) for row in rows]
+        return {"data": [dict(row) for row in rows]}

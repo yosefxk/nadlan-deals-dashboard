@@ -35,7 +35,7 @@ async def get_stats(conn: aiosqlite.Connection = Depends(get_db)):
         natures=natures or 0
     )
 
-@router.get("/settlements", response_model=List[SettlementInfo])
+@router.get("/settlements")
 async def get_settlements(conn: aiosqlite.Connection = Depends(get_db)):
     query = """
         SELECT settlement, settlement_code, COUNT(*) as deals, MAX(date) as last_deal 
@@ -46,9 +46,9 @@ async def get_settlements(conn: aiosqlite.Connection = Depends(get_db)):
     """
     async with conn.execute(query) as cur:
         rows = await cur.fetchall()
-        return [dict(row) for row in rows]
+        return {"data": [dict(row) for row in rows]}
 
-@router.get("/natures", response_model=List[NatureInfo])
+@router.get("/natures")
 async def get_natures(conn: aiosqlite.Connection = Depends(get_db)):
     query = """
         SELECT nature, COUNT(*) as deals, 
@@ -61,4 +61,4 @@ async def get_natures(conn: aiosqlite.Connection = Depends(get_db)):
     """
     async with conn.execute(query) as cur:
         rows = await cur.fetchall()
-        return [dict(row) for row in rows]
+        return {"data": [dict(row) for row in rows]}
