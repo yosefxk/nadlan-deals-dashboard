@@ -69,7 +69,7 @@ export default function ParcelDetail() {
                     <td className="py-3 px-4">{deal.nature}</td>
                     <td className="py-3 px-4">{deal.rooms || '-'}</td>
                     <td className="py-3 px-4">{deal.area_sqm || '-'}</td>
-                    <td className="py-3 px-4 font-medium text-indigo-600">₪{deal.amount.toLocaleString('he-IL')}</td>
+                    <td className="py-3 px-4 font-medium text-indigo-600">₪{deal.amount != null ? deal.amount.toLocaleString('he-IL') : '—'}</td>
                   </tr>
                 ))}
               </tbody>

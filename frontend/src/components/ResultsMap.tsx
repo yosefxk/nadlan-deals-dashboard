@@ -78,7 +78,7 @@ export default function ResultsMap({ deals, loading }: Props) {
                   {deal.full_address || deal.settlement}
                 </div>
                 <div className="text-indigo-600 font-bold text-lg mb-2">
-                  ₪{deal.amount.toLocaleString('he-IL')}
+                  ₪{deal.amount ? deal.amount.toLocaleString('he-IL') : '—'}
                 </div>
                 <div className="text-xs text-slate-600 space-y-1">
                   <div>

@@ -51,12 +51,12 @@ export interface CompareResult {
   settlement: string;
   deals_from: number;
   deals_to: number;
-  median_from: number;
-  median_to: number;
-  ppsqm_from: number;
-  ppsqm_to: number;
-  change_pct: number;
-  ppsqm_change_pct: number;
+  median_from: number | null;
+  median_to: number | null;
+  ppsqm_from: number | null;
+  ppsqm_to: number | null;
+  change_pct: number | null;
+  ppsqm_change_pct: number | null;
 }
 
 export interface SearchResponse {

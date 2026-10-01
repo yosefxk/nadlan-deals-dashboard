@@ -151,13 +151,14 @@ export default function Compare() {
               />
               <Tooltip
                 formatter={(val: number) => {
+                  if (val == null) return ['—', ''];
                   if (selectedMetric === 'median_amount' || selectedMetric === 'median_ppsqm_normalized') {
-                    return `₪${val.toLocaleString('he-IL')}`;
+                    return [`₪${val.toLocaleString('he-IL')}`, ''];
                   }
                   if (selectedMetric === 'median_area') {
-                    return `${val.toLocaleString('he-IL')} מ״ר`;
+                    return [`${val.toLocaleString('he-IL')} מ״ר`, ''];
                   }
-                  return val.toLocaleString('he-IL');
+                  return [val.toLocaleString('he-IL'), ''];
                 }}
                 labelFormatter={(label) => `שנת ${label}`}
               />
@@ -203,10 +204,10 @@ export default function Compare() {
                       {settlement}
                     </td>
                     <td className="py-3 px-4">{latest.year}</td>
-                    <td className="py-3 px-4">{latest.deals.toLocaleString('he-IL')}</td>
-                    <td className="py-3 px-4">₪{latest.median_amount.toLocaleString('he-IL')}</td>
-                    <td className="py-3 px-4">₪{latest.median_ppsqm_normalized.toLocaleString('he-IL')}</td>
-                    <td className="py-3 px-4">{latest.median_area.toLocaleString('he-IL')} מ״ר</td>
+                    <td className="py-3 px-4">{latest.deals != null ? latest.deals.toLocaleString('he-IL') : '—'}</td>
+                    <td className="py-3 px-4">{latest.median_amount != null ? `₪${latest.median_amount.toLocaleString('he-IL')}` : '—'}</td>
+                    <td className="py-3 px-4">{latest.median_ppsqm_normalized != null ? `₪${latest.median_ppsqm_normalized.toLocaleString('he-IL')}` : '—'}</td>
+                    <td className="py-3 px-4">{latest.median_area != null ? `${latest.median_area.toLocaleString('he-IL')} מ״ר` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
