@@ -22,6 +22,30 @@ async def get_series(
             return {"series": {}}
             
         series_dict = {}
+        if not nature and not date_from and not date_to:
+            try:
+                placeholders = ",".join(["?"] * len(s_list))
+                async with conn.execute(
+                    f"SELECT settlement, year, deals, median_amount, median_area, median_ppsqm_normalized FROM settlement_series WHERE settlement IN ({placeholders}) ORDER BY year ASC",
+                    s_list
+                ) as cur:
+                    rows = await cur.fetchall()
+                    for s in s_list:
+                        series_dict[s] = []
+                    for r in rows:
+                        s_name = r["settlement"]
+                        if s_name in series_dict:
+                            series_dict[s_name].append({
+                                "year": r["year"],
+                                "deals": r["deals"],
+                                "median_amount": r["median_amount"],
+                                "median_area": r["median_area"],
+                                "median_ppsqm_normalized": r["median_ppsqm_normalized"]
+                            })
+                    return {"series": series_dict}
+            except Exception:
+                pass
+
         for s_name in s_list:
             query_parts = ["settlement = ?"]
             params = [s_name]
@@ -80,6 +104,20 @@ async def get_series(
         try:
             async with conn.execute(
                 "SELECT year, deals, median_amount, median_area, median_ppsqm_normalized FROM national_series ORDER BY year ASC"
+            ) as cur:
+                rows = await cur.fetchall()
+                if rows:
+                    data = [dict(row) for row in rows]
+                    return SeriesResponse(data=data, count=len(data))
+        except Exception:
+            pass
+
+    # Fast-path for settlement drilldown: use precomputed settlement_series table
+    if settlement and not nature and not date_from and not date_to:
+        try:
+            async with conn.execute(
+                "SELECT year, deals, median_amount, median_area, median_ppsqm_normalized FROM settlement_series WHERE settlement = ? ORDER BY year ASC",
+                (settlement,)
             ) as cur:
                 rows = await cur.fetchall()
                 if rows:

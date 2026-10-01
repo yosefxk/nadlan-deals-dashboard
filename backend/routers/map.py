@@ -24,6 +24,18 @@ async def get_map_summary(
     year_to: Optional[int] = None,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
+    # Fast-path: default national view uses precalculated map_summary table
+    if not nature and not year_from and not year_to:
+        try:
+            async with conn.execute(
+                "SELECT settlement, lat, lon, deals, median_amount, median_ppsqm, avg_amount, avg_area FROM map_summary ORDER BY deals DESC"
+            ) as cur:
+                rows = await cur.fetchall()
+                if rows:
+                    return {"data": [dict(r) for r in rows], "total": len(rows)}
+        except Exception:
+            pass
+
     clauses = ["settlement IS NOT NULL", "settlement != ''", "amount > 0"]
     params = []
 

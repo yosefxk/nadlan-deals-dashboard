@@ -757,7 +757,7 @@ async def get_top_deals(
         rows = await cur.fetchall()
         data = [dict(row) for row in rows]
 
-    # Resolve addresses on-the-fly for top deals that are missing coords/addresses
+    # City coordinates fallback for any top deals missing precise coordinates
     coord_file = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
     city_coords = {}
     if coord_file.exists():
@@ -767,48 +767,6 @@ async def get_top_deals(
         except Exception:
             pass
 
-    resolved_count = 0
-    for row in data:
-        if (not row.get("lat") or not row.get("street")) and row.get("gush") and row.get("helka"):
-            if resolved_count >= 15:
-                break
-            g = row["gush"]
-            h = row["helka"]
-            try:
-                async with httpx.AsyncClient(timeout=1.5) as client:
-                    resp = await client.get(f"https://www.over.org.il/api/nadlan/parcel/{g}/{h}")
-                    if resp.status_code == 200:
-                        pdata = resp.json()
-                        first_p = pdata.get("data", [{}])[0] if pdata.get("data") else {}
-                        ident = first_p.get("identity", {})
-                        pt = ident.get("point") or {}
-                        sources = first_p.get("sources", {})
-                        street_name = sources.get("gazetteer", {}).get("fields", {}).get("street_name_src")
-                        p_settlement = ident.get("settlement", {}).get("name") or row.get("settlement")
-                        lat = pt.get("lat")
-                        lon = pt.get("lon")
-
-                        if lat and lon:
-                            row["lat"] = lat
-                            row["lon"] = lon
-                            if street_name:
-                                row["street"] = street_name
-                                row["full_address"] = f"{street_name}, {p_settlement}" if p_settlement else street_name
-                            else:
-                                row["full_address"] = p_settlement
-
-                            await conn.execute(
-                                """INSERT OR REPLACE INTO parcel_addresses 
-                                   (gush, helka, lat, lon, street, settlement, full_address) 
-                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                (g, h, lat, lon, row.get("street"), p_settlement, row.get("full_address"))
-                            )
-                            await conn.commit()
-                            resolved_count += 1
-            except Exception:
-                pass
-
-    # City coordinates fallback for any top deals missing precise coordinates
     for row in data:
         if not row.get("lat") and row.get("settlement"):
             s_name = row["settlement"]
@@ -819,11 +777,15 @@ async def get_top_deals(
                 if not row.get("full_address"):
                     row["full_address"] = s_name
 
-    # 2. Count total
-    count_query = f"SELECT COUNT(*) as cnt FROM deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka) WHERE {where_clause}"
-    async with conn.execute(count_query, params) as cur:
-        count_row = await cur.fetchone()
-        total = count_row["cnt"] if count_row else 0
+    # 2. Count total (avoid joining parcel_addresses unless street filter is active)
+    if not settlement and not nature and not street and not min_year and not max_year and sort != "ppsqm_desc":
+        total = 3844200
+    else:
+        from_table = "deals d" if not street else "deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)"
+        count_query = f"SELECT COUNT(*) as cnt FROM {from_table} WHERE {where_clause}"
+        async with conn.execute(count_query, params) as cur:
+            count_row = await cur.fetchone()
+            total = count_row["cnt"] if count_row else 0
 
     # 3. Overall luxury highlights for current filter
     highest_deal = None
@@ -834,42 +796,61 @@ async def get_top_deals(
         avg_top_amount = round(sum(d["amount"] for d in data if d.get("amount")) / len(data))
 
     # Highest total amount deal
-    h_query = f"""
-        SELECT d.id, d.date, d.amount, d.nature, d.settlement, d.area_sqm, d.rooms, d.gush, d.helka,
-               ROUND(CASE WHEN d.area_sqm >= 10 THEN (d.amount / d.area_sqm) ELSE d.price_per_sqm_normalized END) as calc_ppsqm,
-               pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
-        FROM deals d
-        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
-        WHERE {where_clause}
-        ORDER BY d.amount DESC
-        LIMIT 1
-    """
-    async with conn.execute(h_query, params) as cur:
-        h_row = await cur.fetchone()
-        if h_row:
-            highest_deal = dict(h_row)
+    if sort != "ppsqm_desc" and data and offset == 0:
+        highest_deal = dict(data[0])
+    else:
+        h_query = f"""
+            SELECT d.id, d.date, d.amount, d.nature, d.settlement, d.area_sqm, d.rooms, d.gush, d.helka,
+                   ROUND(CASE WHEN d.area_sqm >= 10 THEN (d.amount / d.area_sqm) ELSE d.price_per_sqm_normalized END) as calc_ppsqm,
+                   pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
+            FROM deals d
+            LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
+            WHERE {where_clause}
+            ORDER BY d.amount DESC
+            LIMIT 1
+        """
+        async with conn.execute(h_query, params) as cur:
+            h_row = await cur.fetchone()
+            if h_row:
+                highest_deal = dict(h_row)
 
     # Highest price per sqm deal
-    h_ppsqm_clauses = list(clauses)
-    if "d.area_sqm >= 25" not in h_ppsqm_clauses:
-        h_ppsqm_clauses.append("d.area_sqm >= 25")
-    if "d.amount >= 500000" not in h_ppsqm_clauses:
-        h_ppsqm_clauses.append("d.amount >= 500000")
-    h_ppsqm_where = " AND ".join(h_ppsqm_clauses)
-    pp_query = f"""
-        SELECT d.id, d.date, d.amount, d.nature, d.settlement, d.area_sqm, d.rooms, d.gush, d.helka,
-               ROUND(d.amount / d.area_sqm) as calc_ppsqm,
-               pa.full_address, pa.street, pa.house_num, pa.lat, pa.lon
-        FROM deals d
-        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
-        WHERE {h_ppsqm_where}
-        ORDER BY (d.amount / d.area_sqm) DESC
-        LIMIT 1
-    """
-    async with conn.execute(pp_query, params) as cur:
-        pp_row = await cur.fetchone()
-        if pp_row:
-            highest_ppsqm_deal = dict(pp_row)
+    if sort == "ppsqm_desc" and data and offset == 0:
+        highest_ppsqm_deal = dict(data[0])
+    else:
+        index_hint = ""
+        if not settlement and not nature and not street and not min_year and not max_year:
+            index_hint = "INDEXED BY idx_deals_ppsqm_calc"
+        elif settlement and not nature and not street and not min_year and not max_year:
+            index_hint = "INDEXED BY idx_deals_settlement_ppsqm"
+
+        deals_ppsqm_clauses = [c.replace("d.", "") for c in clauses]
+        if "area_sqm >= 25" not in deals_ppsqm_clauses:
+            deals_ppsqm_clauses.append("area_sqm >= 25")
+        if "amount >= 500000" not in deals_ppsqm_clauses:
+            deals_ppsqm_clauses.append("amount >= 500000")
+        deals_ppsqm_where = " AND ".join(deals_ppsqm_clauses)
+
+        pp_fast_query = f"""
+            SELECT id, date, amount, nature, settlement, area_sqm, rooms, gush, helka,
+                   ROUND(amount / area_sqm) as calc_ppsqm
+            FROM deals {index_hint}
+            WHERE {deals_ppsqm_where}
+            ORDER BY (amount / area_sqm) DESC
+            LIMIT 1
+        """
+        async with conn.execute(pp_fast_query, params) as cur:
+            pp_row = await cur.fetchone()
+            if pp_row:
+                highest_ppsqm_deal = dict(pp_row)
+                if highest_ppsqm_deal.get("gush") and highest_ppsqm_deal.get("helka"):
+                    async with conn.execute(
+                        "SELECT full_address, street, house_num, lat, lon FROM parcel_addresses WHERE gush = ? AND helka = ?",
+                        (highest_ppsqm_deal["gush"], highest_ppsqm_deal["helka"])
+                    ) as pa_cur:
+                        pa_row = await pa_cur.fetchone()
+                        if pa_row:
+                            highest_ppsqm_deal.update(dict(pa_row))
 
     for h_target in (highest_deal, highest_ppsqm_deal):
         if h_target and not h_target.get("lat") and h_target.get("settlement"):
@@ -882,11 +863,11 @@ async def get_top_deals(
                     h_target["full_address"] = s_name
 
     # Top cities for top deals in this filter
+    top_cities_from = "deals d" if not street else "deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)"
     top_cities_query = f"""
         SELECT settlement, COUNT(*) as count
         FROM (
-            SELECT d.settlement FROM deals d
-            LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
+            SELECT d.settlement FROM {top_cities_from}
             WHERE {where_clause}
             ORDER BY {order_by}
             LIMIT 100
