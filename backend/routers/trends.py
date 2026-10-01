@@ -75,6 +75,19 @@ async def get_series(
         
     where_clause = ("WHERE " + " AND ".join(query_parts)) if query_parts else ""
     
+    # Fast-path for national mode (Home page): use precomputed national_series table
+    if not where_clause:
+        try:
+            async with conn.execute(
+                "SELECT year, deals, median_amount, median_area, median_ppsqm_normalized FROM national_series ORDER BY year ASC"
+            ) as cur:
+                rows = await cur.fetchall()
+                if rows:
+                    data = [dict(row) for row in rows]
+                    return SeriesResponse(data=data, count=len(data))
+        except Exception:
+            pass
+
     query = f'''
         SELECT year, 
                COUNT(*) as deals, 
