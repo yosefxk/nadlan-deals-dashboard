@@ -125,18 +125,19 @@ export default function TopDeals() {
     gush?: string;
     helka?: string;
   }) => {
+    // 1. If we have precise geographic coordinates, point directly to GPS pin
     if (deal.lat && deal.lon) {
       return `https://www.google.com/maps/search/?api=1&query=${deal.lat},${deal.lon}`;
+    }
+    // 2. If we have a named street address or settlement, query Google Maps with city + street
+    const addressQuery = [deal.street, deal.settlement].filter(Boolean).join(', ');
+    if (addressQuery) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
     }
     if (deal.full_address) {
       return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(deal.full_address)}`;
     }
-    const parts = [
-      deal.street,
-      deal.settlement,
-      deal.gush ? `גוש ${deal.gush} חלקה ${deal.helka}` : ''
-    ].filter(Boolean);
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(parts.join(' ') || 'ישראל')}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(deal.settlement || 'ישראל')}`;
   };
 
   const getDisplayAddress = (deal: {
@@ -147,14 +148,20 @@ export default function TopDeals() {
     gush?: string;
     helka?: string;
   }) => {
-    if (deal.full_address) return deal.full_address;
+    // Priority: street name + house number
     if (deal.street) {
-      return [deal.street, deal.house_num, deal.settlement].filter(Boolean).join(' ');
+      const parts = [deal.street, deal.house_num].filter(Boolean).join(' ');
+      return deal.settlement ? `${parts}, ${deal.settlement}` : parts;
     }
-    if (deal.gush && deal.helka) {
-      return `גוש ${deal.gush} חלקה ${deal.helka}, ${deal.settlement || ''}`;
+    // Clean full address without repeating gush/helka if already known
+    if (deal.full_address && !deal.full_address.startsWith('גוש')) {
+      return deal.full_address;
     }
-    return deal.settlement || '—';
+    // If only settlement is available, state the settlement clearly
+    if (deal.settlement) {
+      return `אזור ${deal.settlement}`;
+    }
+    return 'כתובת מדויקת בבדיקה';
   };
 
   const deals = data?.data || [];

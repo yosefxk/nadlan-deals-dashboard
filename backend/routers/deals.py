@@ -757,6 +757,68 @@ async def get_top_deals(
         rows = await cur.fetchall()
         data = [dict(row) for row in rows]
 
+    # Resolve addresses on-the-fly for top deals that are missing coords/addresses
+    coord_file = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
+    city_coords = {}
+    if coord_file.exists():
+        try:
+            with open(coord_file, "r", encoding="utf-8") as f:
+                city_coords = json.load(f)
+        except Exception:
+            pass
+
+    resolved_count = 0
+    for row in data:
+        if (not row.get("lat") or not row.get("street")) and row.get("gush") and row.get("helka"):
+            if resolved_count >= 15:
+                break
+            g = row["gush"]
+            h = row["helka"]
+            try:
+                async with httpx.AsyncClient(timeout=1.5) as client:
+                    resp = await client.get(f"https://www.over.org.il/api/nadlan/parcel/{g}/{h}")
+                    if resp.status_code == 200:
+                        pdata = resp.json()
+                        first_p = pdata.get("data", [{}])[0] if pdata.get("data") else {}
+                        ident = first_p.get("identity", {})
+                        pt = ident.get("point") or {}
+                        sources = first_p.get("sources", {})
+                        street_name = sources.get("gazetteer", {}).get("fields", {}).get("street_name_src")
+                        p_settlement = ident.get("settlement", {}).get("name") or row.get("settlement")
+                        lat = pt.get("lat")
+                        lon = pt.get("lon")
+
+                        if lat and lon:
+                            row["lat"] = lat
+                            row["lon"] = lon
+                            if street_name:
+                                row["street"] = street_name
+                                row["full_address"] = f"{street_name}, {p_settlement}" if p_settlement else street_name
+                            else:
+                                row["full_address"] = p_settlement
+
+                            await conn.execute(
+                                """INSERT OR REPLACE INTO parcel_addresses 
+                                   (gush, helka, lat, lon, street, settlement, full_address) 
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                (g, h, lat, lon, row.get("street"), p_settlement, row.get("full_address"))
+                            )
+                            await conn.commit()
+                            resolved_count += 1
+            except Exception:
+                pass
+
+    # City coordinates fallback for any top deals missing precise coordinates
+    for row in data:
+        if not row.get("lat") and row.get("settlement"):
+            s_name = row["settlement"]
+            coords = city_coords.get(s_name) or city_coords.get(s_name.strip().replace(" -", "-").replace("- ", "-")) or city_coords.get(s_name.split("-")[0].strip())
+            if coords:
+                row["lat"] = coords[0]
+                row["lon"] = coords[1]
+                if not row.get("full_address"):
+                    row["full_address"] = s_name
+
     # 2. Count total
     count_query = f"SELECT COUNT(*) as cnt FROM deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka) WHERE {where_clause}"
     async with conn.execute(count_query, params) as cur:
@@ -808,6 +870,16 @@ async def get_top_deals(
         pp_row = await cur.fetchone()
         if pp_row:
             highest_ppsqm_deal = dict(pp_row)
+
+    for h_target in (highest_deal, highest_ppsqm_deal):
+        if h_target and not h_target.get("lat") and h_target.get("settlement"):
+            s_name = h_target["settlement"]
+            coords = city_coords.get(s_name) or city_coords.get(s_name.strip().replace(" -", "-").replace("- ", "-")) or city_coords.get(s_name.split("-")[0].strip())
+            if coords:
+                h_target["lat"] = coords[0]
+                h_target["lon"] = coords[1]
+                if not h_target.get("full_address"):
+                    h_target["full_address"] = s_name
 
     # Top cities for top deals in this filter
     top_cities_query = f"""
