@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polygon, Tooltip as LeafletTooltip, useMap } from 'react-leaflet';
 import { useQuery } from '@tanstack/react-query';
-import { fetchMapSummary, fetchNatures, fetchSettlementDetail, fetchSearchGeo } from '../api';
+import { fetchMapSummary, fetchNatures, fetchSettlementDetail, fetchSearchGeo, fetchSettlementPolygons } from '../api';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Deal } from '../types';
 import L from 'leaflet';
@@ -76,6 +76,7 @@ export default function MapPage() {
 
   // Selected settlement in sidebar
   const [selectedSettlement, setSelectedSettlement] = useState<string | null>(null);
+  const [hoveredSettlement, setHoveredSettlement] = useState<string | null>(null);
 
   // 1. Fetch National Heatmap Summary
   const { data: mapData, isLoading: mapLoading } = useQuery({
@@ -87,6 +88,13 @@ export default function MapPage() {
     }),
     enabled: !isDealsMode,
     staleTime: 1000 * 60 * 10
+  });
+
+  // 1.1 Fetch Settlement Boundary Polygons
+  const { data: polygonsData } = useQuery({
+    queryKey: ['settlementPolygons'],
+    queryFn: fetchSettlementPolygons,
+    staleTime: Infinity
   });
 
   // 2. Fetch Deals for Search Results Mode (Option 5)
@@ -413,23 +421,110 @@ export default function MapPage() {
               </>
             )}
 
-            {/* In National Mode: Render Heat Bubbles for all ~1,000+ Settlements (Option 2) */}
+            {/* In National Mode: Render Outlined City Polygons for all ~1,000+ Settlements */}
             {!isDealsMode && (
               <>
                 <MapBoundsFitter selectedCoords={selectedCoords} />
                 {mapData?.data.map((s) => {
                   const val = s[metric];
                   const color = getColor(val);
-                  const radius = getRadius(s.deals);
                   const isSelected = selectedSettlement === s.settlement;
+                  const isHovered = hoveredSettlement === s.settlement;
+                  const polyCoords = polygonsData?.[s.settlement];
 
+                  const popupContent = (
+                    <Popup>
+                      <div className="text-right p-1 min-w-[190px]" dir="rtl">
+                        <h3 className="font-bold text-base text-slate-900 mb-1">{s.settlement}</h3>
+                        <div className="space-y-1 text-xs text-slate-600 mb-3">
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">סה״כ עסקאות:</span>
+                            <span className="font-semibold text-slate-700">
+                              {s.deals.toLocaleString('he-IL')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">מחיר חציוני:</span>
+                            <span className="font-bold text-indigo-600">
+                              {s.median_amount ? `₪${s.median_amount.toLocaleString('he-IL')}` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">מחיר למ״ר חציוני:</span>
+                            <span className="font-semibold text-slate-700">
+                              {s.median_ppsqm ? `₪${s.median_ppsqm.toLocaleString('he-IL')}` : '-'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setSelectedSettlement(s.settlement)}
+                            className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded transition-colors"
+                          >
+                            פתח כרטיסייה
+                          </button>
+                          <button
+                            onClick={() => navigate(`/settlement/${encodeURIComponent(s.settlement)}`)}
+                            className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded transition-colors"
+                          >
+                            פרופיל מלא
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  );
+
+                  const tooltipContent = (
+                    <LeafletTooltip sticky direction="top" opacity={0.95}>
+                      <div className="text-right p-0.5 font-sans" dir="rtl">
+                        <div className="font-bold text-xs text-slate-900">{s.settlement}</div>
+                        <div className="text-[11px] text-indigo-600 font-semibold mt-0.5">
+                          {metric === 'median_amount' && s.median_amount && `₪${s.median_amount.toLocaleString('he-IL')}`}
+                          {metric === 'median_ppsqm' && s.median_ppsqm && `₪${s.median_ppsqm.toLocaleString('he-IL')} למ״ר`}
+                          {metric === 'deals' && `${s.deals.toLocaleString('he-IL')} עסקאות`}
+                        </div>
+                      </div>
+                    </LeafletTooltip>
+                  );
+
+                  if (polyCoords) {
+                    return (
+                      <Polygon
+                        key={s.settlement}
+                        positions={polyCoords}
+                        pathOptions={{
+                          color: isSelected ? '#1e1b4b' : (isHovered ? '#1e293b' : '#334155'),
+                          fillColor: color,
+                          fillOpacity: isSelected ? 0.88 : (isHovered ? 0.78 : 0.58),
+                          weight: isSelected ? 3.5 : (isHovered ? 2.5 : 1.2),
+                        }}
+                        eventHandlers={{
+                          click: () => {
+                            setSelectedSettlement(s.settlement);
+                          },
+                          mouseover: () => {
+                            setHoveredSettlement(s.settlement);
+                          },
+                          mouseout: () => {
+                            setHoveredSettlement(null);
+                          },
+                        }}
+                      >
+                        {tooltipContent}
+                        {popupContent}
+                      </Polygon>
+                    );
+                  }
+
+                  // Fallback circle marker if polygon not loaded yet
+                  const radius = getRadius(s.deals);
                   return (
                     <CircleMarker
                       key={s.settlement}
                       center={[s.lat, s.lon]}
                       radius={isSelected ? radius + 5 : radius}
                       pathOptions={{
-                        color: isSelected ? '#1e1b4b' : color,
+                        color: isSelected ? '#1e1b4b' : (isHovered ? '#1e293b' : '#334155'),
                         fillColor: color,
                         fillOpacity: isSelected ? 0.95 : 0.75,
                         weight: isSelected ? 3 : 1.5,
@@ -438,47 +533,16 @@ export default function MapPage() {
                         click: () => {
                           setSelectedSettlement(s.settlement);
                         },
+                        mouseover: () => {
+                          setHoveredSettlement(s.settlement);
+                        },
+                        mouseout: () => {
+                          setHoveredSettlement(null);
+                        },
                       }}
                     >
-                      <Popup>
-                        <div className="text-right p-1 min-w-[180px]" dir="rtl">
-                          <h3 className="font-bold text-base text-slate-900 mb-1">{s.settlement}</h3>
-                          <div className="space-y-1 text-xs text-slate-600 mb-3">
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">סה״כ עסקאות:</span>
-                              <span className="font-semibold text-slate-700">
-                                {s.deals.toLocaleString('he-IL')}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">מחיר חציוני:</span>
-                              <span className="font-bold text-indigo-600">
-                                {s.median_amount ? `₪${s.median_amount.toLocaleString('he-IL')}` : '-'}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">מחיר למ״ר חציוני:</span>
-                              <span className="font-semibold text-slate-700">
-                                {s.median_ppsqm ? `₪${s.median_ppsqm.toLocaleString('he-IL')}` : '-'}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => setSelectedSettlement(s.settlement)}
-                              className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded transition-colors"
-                            >
-                              פתח כרטיסייה
-                            </button>
-                            <button
-                              onClick={() => navigate(`/settlement/${encodeURIComponent(s.settlement)}`)}
-                              className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded transition-colors"
-                            >
-                              פרופיל מלא
-                            </button>
-                          </div>
-                        </div>
-                      </Popup>
+                      {tooltipContent}
+                      {popupContent}
                     </CircleMarker>
                   );
                 })}

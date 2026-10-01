@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/ ./backend/
 COPY data/settlement_coordinates.json ./data/
+COPY data/settlement_polygons.json ./data/
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 EXPOSE 8088

@@ -13,6 +13,7 @@ services:
     volumes:
       - ./data/deals.db:/app/data/deals.db
       - ./data/settlement_coordinates.json:/app/data/settlement_coordinates.json
+      - ./data/settlement_polygons.json:/app/data/settlement_polygons.json
     networks:
       - media_network
 

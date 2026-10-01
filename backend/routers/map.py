@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from typing import Optional, List
 from database import get_db
 import aiosqlite
@@ -9,6 +9,9 @@ router = APIRouter(prefix="/api/map")
 
 # Load precomputed settlement coordinates
 COORD_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
+POLYGON_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_polygons.json"
+_cached_polygons_bytes: Optional[bytes] = None
+
 COORDS = {}
 if COORD_FILE.exists():
     try:
@@ -98,3 +101,22 @@ async def get_clusters(conn: aiosqlite.Connection = Depends(get_db)):
     # Keep backward compatibility
     res = await get_map_summary(conn=conn)
     return [{"settlement": x["settlement"], "count": x["deals"]} for x in res["data"]]
+
+@router.get("/polygons")
+async def get_settlement_polygons():
+    global _cached_polygons_bytes
+    if _cached_polygons_bytes is None:
+        if POLYGON_FILE.exists():
+            try:
+                with open(POLYGON_FILE, "rb") as f:
+                    _cached_polygons_bytes = f.read()
+            except Exception:
+                _cached_polygons_bytes = b"{}"
+        else:
+            _cached_polygons_bytes = b"{}"
+    return Response(
+        content=_cached_polygons_bytes,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+

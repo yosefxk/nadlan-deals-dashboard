@@ -125,3 +125,6 @@ export async function fetchMapSummary(params?: { nature?: string; year_from?: nu
   return fetchJson<{ data: import('../types').MapSettlement[]; total: number }>(`${API_BASE}/map/summary${qs ? '?' + qs : ''}`);
 }
 
+export async function fetchSettlementPolygons(): Promise<Record<string, any>> {
+  return fetchJson<Record<string, any>>(`${API_BASE}/map/polygons`);
+}
