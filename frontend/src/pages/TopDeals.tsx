@@ -13,7 +13,8 @@ import {
   ExternalLink,
   Navigation as NavigationIcon
 } from 'lucide-react';
-import { fetchTopDeals, fetchSettlements } from '../api';
+import { fetchTopDeals } from '../api';
+import SettlementAutocomplete from '../components/SettlementAutocomplete';
 import clsx from 'clsx';
 
 const LUXURY_CITIES = [
@@ -49,7 +50,6 @@ export default function TopDeals() {
 
   // Local street input state
   const [streetInput, setStreetInput] = useState(street);
-  const citySelectId = useId();
   const streetInputId = useId();
   const natureSelectId = useId();
   const timeframeSelectId = useId();
@@ -58,13 +58,6 @@ export default function TopDeals() {
   let min_year: number | undefined = undefined;
   if (timeframe === '5y') min_year = 2021;
   else if (timeframe === '10y') min_year = 2016;
-
-  // Fetch settlements list for dropdown
-  const { data: settlementsData } = useQuery({
-    queryKey: ['settlements'],
-    queryFn: fetchSettlements,
-    staleTime: 1000 * 60 * 30,
-  });
 
   // Fetch top deals
   const { data, isLoading, error } = useQuery({
@@ -256,24 +249,17 @@ export default function TopDeals() {
 
         {/* Filters Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
-          {/* Settlement Select */}
+          {/* Settlement Autocomplete Search */}
           <div>
-            <label htmlFor={citySelectId} className="block text-xs font-semibold text-slate-600 mb-1">
-              בחר יישוב
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              יישוב / עיר (הקלד לחיפוש)
             </label>
-            <select
-              id={citySelectId}
-              value={settlement}
-              onChange={(e) => updateParam('settlement', e.target.value)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="">כל היישובים (כל הארץ)</option>
-              {settlementsData?.data.map((s) => (
-                <option key={s.settlement} value={s.settlement}>
-                  {s.settlement} ({formatNumberWithCommas(s.deals)} עסקאות)
-                </option>
-              ))}
-            </select>
+            <SettlementAutocomplete
+              selected={settlement ? [settlement] : []}
+              onChange={(cities) => updateParam('settlement', cities[0] || '')}
+              singleSelect={true}
+              placeholder="הקלד שם עיר (למשל: תל אביב, הרצליה...)"
+            />
           </div>
 
           {/* Property Type Select */}
