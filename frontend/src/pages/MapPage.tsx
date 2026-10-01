@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polygon, Tooltip as LeafletTooltip, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon, Tooltip as LeafletTooltip, useMap } from 'react-leaflet';
 import { useQuery } from '@tanstack/react-query';
 import { fetchMapSummary, fetchNatures, fetchSettlementDetail, fetchSearchGeo, fetchSettlementPolygons } from '../api';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
@@ -91,7 +91,7 @@ export default function MapPage() {
   });
 
   // 1.1 Fetch Settlement Boundary Polygons
-  const { data: polygonsData } = useQuery({
+  const { data: polygonsData, isLoading: polygonsLoading } = useQuery({
     queryKey: ['settlementPolygons'],
     queryFn: fetchSettlementPolygons,
     staleTime: Infinity
@@ -159,14 +159,6 @@ export default function MapPage() {
     if (ratio < 0.8) return '#f97316'; // Orange
     if (ratio < 0.92) return '#ef4444'; // Red
     return '#9333ea'; // Deep Purple (luxury)
-  };
-
-  const getRadius = (deals: number) => {
-    if (metric === 'deals') {
-      // Logarithmic scaling for deal volume
-      return Math.max(6, Math.min(26, Math.log10(deals + 1) * 6));
-    }
-    return Math.max(5, Math.min(18, Math.log10(deals + 1) * 4));
   };
 
   const selectedCoords = useMemo(() => {
@@ -351,11 +343,11 @@ export default function MapPage() {
       <div className="relative h-[calc(100vh-14rem)] min-h-[550px] w-full rounded-2xl overflow-hidden shadow-sm border border-slate-100 flex">
         {/* Map Container */}
         <div className="flex-1 h-full w-full relative z-0">
-          {(mapLoading || searchGeoLoading) && (
+          {(mapLoading || searchGeoLoading || (!isDealsMode && (polygonsLoading || !polygonsData))) && (
             <div className="absolute inset-0 bg-white/40 backdrop-blur-xs z-50 flex items-center justify-center">
               <div className="bg-white/90 px-6 py-4 rounded-2xl shadow-lg border border-slate-100 flex items-center gap-3">
                 <div className="w-6 h-6 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-sm font-medium text-slate-700">טוען נתוני מפה...</span>
+                <span className="text-sm font-medium text-slate-700">טוען מפת גבולות יישובים...</span>
               </div>
             </div>
           )}
@@ -516,35 +508,8 @@ export default function MapPage() {
                     );
                   }
 
-                  // Fallback circle marker if polygon not loaded yet
-                  const radius = getRadius(s.deals);
-                  return (
-                    <CircleMarker
-                      key={s.settlement}
-                      center={[s.lat, s.lon]}
-                      radius={isSelected ? radius + 5 : radius}
-                      pathOptions={{
-                        color: isSelected ? '#1e1b4b' : (isHovered ? '#1e293b' : '#334155'),
-                        fillColor: color,
-                        fillOpacity: isSelected ? 0.95 : 0.75,
-                        weight: isSelected ? 3 : 1.5,
-                      }}
-                      eventHandlers={{
-                        click: () => {
-                          setSelectedSettlement(s.settlement);
-                        },
-                        mouseover: () => {
-                          setHoveredSettlement(s.settlement);
-                        },
-                        mouseout: () => {
-                          setHoveredSettlement(null);
-                        },
-                      }}
-                    >
-                      {tooltipContent}
-                      {popupContent}
-                    </CircleMarker>
-                  );
+                  // No circular fallback in national polygon mode
+                  return null;
                 })}
               </>
             )}
