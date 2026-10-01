@@ -24,6 +24,15 @@ class DealRow(BaseModel):
     addresses_total: Optional[int] = None
     year: Optional[int] = None
     floor: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    distance: Optional[float] = None
+
+class SearchSummary(BaseModel):
+    median_amount: Optional[float] = None
+    median_ppsqm: Optional[float] = None
+    avg_rooms: Optional[float] = None
+    avg_area: Optional[float] = None
 
 class SearchResponse(BaseModel):
     data: List[DealRow]
@@ -31,6 +40,7 @@ class SearchResponse(BaseModel):
     total_capped: bool
     limit: int
     offset: int
+    summary: Optional[SearchSummary] = None
 
 class StatsResponse(BaseModel):
     deals: int

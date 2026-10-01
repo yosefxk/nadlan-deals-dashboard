@@ -65,6 +65,7 @@ export interface SearchResponse {
   total_capped: boolean;
   limit: number;
   offset: number;
+  summary?: SearchSummary;
 }
 
 export interface TopDeal extends Deal {
@@ -120,5 +121,38 @@ export interface TopDealsResponse {
   limit: number;
   offset: number;
   stats: TopDealsStats;
+}
+
+
+export interface SearchSummary {
+  median_amount: number | null;
+  median_ppsqm: number | null;
+  avg_rooms: number | null;
+  avg_area: number | null;
+}
+
+export interface GeoSearchResponse {
+  data: Array<Deal & { lat?: number | null; lon?: number | null; full_address?: string | null }>;
+  total: number;
+  resolved: number;
+  unresolved: number;
+}
+
+export interface NearbyDeal extends Deal {
+  lat: number;
+  lon: number;
+  full_address?: string;
+  distance_km: number;
+}
+
+export interface MapSettlement {
+  settlement: string;
+  lat: number;
+  lon: number;
+  deals: number;
+  median_amount: number | null;
+  median_ppsqm: number | null;
+  avg_amount: number | null;
+  avg_area: number | null;
 }
 

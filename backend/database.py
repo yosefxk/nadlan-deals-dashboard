@@ -28,6 +28,7 @@ class Database:
     async def get_connection(self):
         conn = await aiosqlite.connect(self.db_path)
         await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_parcel_coords ON parcel_addresses(lat, lon)")
         await conn._execute(conn._conn.create_aggregate, "median", 1, MedianAggregate)
         conn.row_factory = aiosqlite.Row
         return conn

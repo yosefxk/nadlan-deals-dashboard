@@ -107,3 +107,21 @@ export async function fetchTopDeals(params: Record<string, string | number>): Pr
   return fetchJson<TopDealsResponse>(`${API_BASE}/top-deals?${searchParams.toString()}`);
 }
 
+
+export async function fetchSearchGeo(params: Record<string, string | number>): Promise<import('../types').GeoSearchResponse> {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') searchParams.append(k, String(v));
+  });
+  return fetchJson<import('../types').GeoSearchResponse>(`${API_BASE}/search/geo?${searchParams.toString()}`);
+}
+
+export async function fetchMapSummary(params?: { nature?: string; year_from?: number; year_to?: number }): Promise<{ data: import('../types').MapSettlement[]; total: number }> {
+  const searchParams = new URLSearchParams();
+  if (params?.nature) searchParams.append('nature', params.nature);
+  if (params?.year_from) searchParams.append('year_from', String(params.year_from));
+  if (params?.year_to) searchParams.append('year_to', String(params.year_to));
+  const qs = searchParams.toString();
+  return fetchJson<{ data: import('../types').MapSettlement[]; total: number }>(`${API_BASE}/map/summary${qs ? '?' + qs : ''}`);
+}
+

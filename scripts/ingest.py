@@ -155,7 +155,13 @@ def fetch_batch_sql(client: httpx.Client, last_row_hash: str | None = None) -> l
                 json={"sql": sql},
                 timeout=45.0,
             )
-            if resp.status_code in (429, 500, 502, 503, 504):
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("retry-after")
+                wait = int(retry_after) + 2 if retry_after and retry_after.isdigit() else 35
+                log.warning(f"Server rate limit (429). Sleeping {wait}s as requested by server...")
+                time.sleep(wait)
+                continue
+            elif resp.status_code in (500, 502, 503, 504):
                 wait = min(RETRY_DELAY * attempt, 60)
                 log.warning(f"Server returned {resp.status_code}. Waiting {wait}s... (attempt {attempt}/{MAX_RETRIES})")
                 time.sleep(wait)
@@ -288,7 +294,8 @@ def build_indexes_and_aggregates(conn: sqlite3.Connection):
 
 def main():
     parser = argparse.ArgumentParser(description="High-speed ingest of over.org.il deals")
-    parser.add_argument("--db", default="../data/deals.db", help="Path to SQLite database")
+    default_db = Path(__file__).resolve().parent.parent / "data" / "deals.db"
+    parser.add_argument("--db", default=str(default_db), help="Path to SQLite database")
     parser.add_argument("--limit", type=int, default=None, help="Max records to ingest in this run")
     parser.add_argument("--aggregates-only", action="store_true", help="Only build indexes and aggregates")
     args = parser.parse_args()
@@ -367,8 +374,8 @@ def main():
                 log.info("Reached end of table dataset.")
                 break
 
-            # Politeness pause to avoid 429
-            time.sleep(0.35)
+            # Politeness pause to adhere to 20 req/min limit
+            time.sleep(3.2)
 
     except KeyboardInterrupt:
         log.info("\nIngestion paused by user. Checkpoint saved.")
