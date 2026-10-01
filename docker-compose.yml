@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+  nadlan-deals:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nadlan-deals:latest
+    container_name: nadlan-deals
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./data/deals.db:/app/data/deals.db
+      - ./data/settlement_coordinates.json:/app/data/settlement_coordinates.json
+    networks:
+      - media_network
+
+networks:
+  media_network:
+    external: true
