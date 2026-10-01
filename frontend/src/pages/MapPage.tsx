@@ -29,6 +29,8 @@ const DefaultMarkerIcon = L.icon({
   popupAnchor: [1, -34],
 });
 
+const YEARS = Array.from({ length: 2026 - 1998 + 1 }, (_, i) => 2026 - i);
+
 function MapBoundsFitter({
   deals,
   selectedCoords
@@ -271,23 +273,30 @@ export default function MapPage() {
             </div>
 
             {/* Year Filters */}
-            <div className="flex items-center gap-1 text-xs">
-              <Calendar size={15} className="text-slate-400 ml-1" />
-              <input
-                type="number"
-                placeholder="משנה"
-                className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs"
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+              <Calendar size={14} className="text-slate-400" />
+              <span>שנים:</span>
+              <select
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-semibold focus:ring-2 focus:ring-indigo-500"
                 value={yearFrom || ''}
                 onChange={(e) => setYearFrom(e.target.value ? Number(e.target.value) : undefined)}
-              />
+              >
+                <option value="">משנה (1998)</option>
+                {YEARS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
               <span>-</span>
-              <input
-                type="number"
-                placeholder="עד שנה"
-                className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs"
+              <select
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-semibold focus:ring-2 focus:ring-indigo-500"
                 value={yearTo || ''}
                 onChange={(e) => setYearTo(e.target.value ? Number(e.target.value) : undefined)}
-              />
+              >
+                <option value="">עד שנה (2026)</option>
+                {YEARS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
             </div>
 
             {(selectedNature || yearFrom || yearTo) && (
