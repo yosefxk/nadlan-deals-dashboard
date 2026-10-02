@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchStats, fetchSeries, fetchSettlements, fetchOmnisearch } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Search, MapPin, Building, Home, ArrowLeft, Trophy, TrendingUp, Building2, Layers } from 'lucide-react';
+import { useGooglePlaces } from '../hooks/useGooglePlaces';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -29,6 +30,34 @@ export default function Dashboard() {
     queryFn: () => fetchOmnisearch(searchQuery),
     enabled: searchQuery.trim().length > 1,
   });
+
+  const {
+    isConfigured: isGoogleMapsConfigured,
+    predictions: googlePredictions,
+    searchPlaces,
+    getDetails: getGoogleDetails,
+  } = useGooglePlaces();
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 1) {
+      searchPlaces(searchQuery);
+    }
+  }, [searchQuery]);
+
+  const handleSelectGooglePlace = async (placeId: string, description: string) => {
+    try {
+      const details = await getGoogleDetails(placeId);
+      if (details.settlement && details.street) {
+        navigate(`/search?settlement=${encodeURIComponent(details.settlement)}&street=${encodeURIComponent(details.street)}`);
+      } else if (details.settlement) {
+        navigate(`/settlement/${encodeURIComponent(details.settlement)}`);
+      } else {
+        navigate(`/search?q=${encodeURIComponent(description)}`);
+      }
+    } catch {
+      navigate(`/search?q=${encodeURIComponent(description)}`);
+    }
+  };
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -56,6 +85,8 @@ export default function Dashboard() {
 
   const getCategoryBadge = (cat: string) => {
     switch (cat) {
+      case 'מפות Google':
+        return <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-semibold border border-amber-200/70">Google Maps</span>;
       case 'רחוב':
         return <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200/60">רחוב</span>;
       case 'יישוב / עיר':
@@ -139,37 +170,80 @@ export default function Dashboard() {
         </div>
 
         {/* Omnisearch Dropdown */}
-        {searchQuery.trim().length > 1 && omniData && omniData.results && omniData.results.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto z-40">
-            {omniData.results.map((res, idx) => (
-              <button
-                key={idx}
-                className="w-full text-right px-4 py-3 hover:bg-indigo-50/60 transition-colors flex items-center justify-between gap-3 group"
-                onClick={() => navigate(res.url)}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-slate-50 group-hover:bg-white text-slate-500 group-hover:text-indigo-600 transition-colors shadow-2xs">
-                    {res.type === 'street' ? <MapPin size={18} /> :
-                     res.type === 'settlement' ? <Building size={18} /> :
-                     res.type === 'nature' ? <Home size={18} /> :
-                     <Search size={18} />}
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-slate-800 group-hover:text-indigo-900 text-sm">
-                      {res.title}
+        {searchQuery.trim().length > 1 && (
+          ((omniData?.results && omniData.results.length > 0) || googlePredictions.length > 0) && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto z-40">
+              {/* Google Places Results */}
+              {googlePredictions.map((pred) => (
+                <button
+                  key={pred.placeId}
+                  className="w-full text-right px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center justify-between gap-3 group"
+                  onClick={() => handleSelectGooglePlace(pred.placeId, pred.description)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-amber-50 group-hover:bg-white text-amber-600 transition-colors shadow-2xs">
+                      <MapPin size={18} />
                     </div>
-                    {res.subtitle && (
-                      <div className="text-xs text-slate-500 mt-0.5">{res.subtitle}</div>
-                    )}
+                    <div className="text-right">
+                      <div className="font-semibold text-slate-800 group-hover:text-amber-900 text-sm">
+                        {pred.mainText}
+                      </div>
+                      {pred.secondaryText && (
+                        <div className="text-xs text-slate-500 mt-0.5">{pred.secondaryText}</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {getCategoryBadge(res.category)}
-                  <ArrowLeft size={16} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
-                </div>
-              </button>
-            ))}
-          </div>
+                  <div className="flex items-center gap-2">
+                    {getCategoryBadge('מפות Google')}
+                    <ArrowLeft size={16} className="text-slate-300 group-hover:text-amber-600 transition-colors" />
+                  </div>
+                </button>
+              ))}
+
+              {/* Database Results */}
+              {omniData?.results.map((res, idx) => (
+                <button
+                  key={idx}
+                  className="w-full text-right px-4 py-3 hover:bg-indigo-50/60 transition-colors flex items-center justify-between gap-3 group"
+                  onClick={() => navigate(res.url)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-slate-50 group-hover:bg-white text-slate-500 group-hover:text-indigo-600 transition-colors shadow-2xs">
+                      {res.type === 'street' ? <MapPin size={18} /> :
+                       res.type === 'settlement' ? <Building size={18} /> :
+                       res.type === 'nature' ? <Home size={18} /> :
+                       <Search size={18} />}
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold text-slate-800 group-hover:text-indigo-900 text-sm">
+                        {res.title}
+                      </div>
+                      {res.subtitle && (
+                        <div className="text-xs text-slate-500 mt-0.5">{res.subtitle}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getCategoryBadge(res.category)}
+                    <ArrowLeft size={16} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
+                  </div>
+                </button>
+              ))}
+
+              {/* Autocomplete status badge */}
+              <div className="px-4 py-2 bg-slate-50 text-[11px] text-slate-500 flex items-center justify-between">
+                <span>חיפוש חכם מתוך 158,000 רחובות ו-1,020 יישובים</span>
+                {isGoogleMapsConfigured ? (
+                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                    Google Places פעיל
+                  </span>
+                ) : (
+                  <span className="text-slate-400">תמיכה ב-Google Places מוכנה</span>
+                )}
+              </div>
+            </div>
+          )
         )}
       </div>
 

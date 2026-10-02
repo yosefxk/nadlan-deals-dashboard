@@ -564,25 +564,29 @@ async def omnisearch(
                 "url": f"/settlement/{row['settlement']}"
             })
 
-    # 3. Streets autocomplete from over.org.il
+    # 3. Streets autocomplete from local streets database
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(
-                "https://www.over.org.il/api/nadlan/streets",
-                params={"q": q_clean, "limit": 4}
-            )
-            if resp.status_code == 200:
-                for s in resp.json().get("data", []):
-                    st_name = s.get("name")
-                    city_name = s.get("settlement_name")
-                    if st_name and city_name:
-                        results.append({
-                            "category": "רחוב",
-                            "type": "street",
-                            "title": f"רחוב {st_name}",
-                            "subtitle": city_name,
-                            "url": f"/search?settlement={city_name}&street={st_name}"
-                        })
+        async with conn.execute(
+            """SELECT DISTINCT street_name, city_name 
+               FROM streets 
+               WHERE street_name LIKE ? OR street_name LIKE ? 
+               ORDER BY 
+                   CASE WHEN street_name LIKE ? THEN 0 ELSE 1 END,
+                   is_official DESC,
+                   LENGTH(street_name) ASC 
+               LIMIT 4""",
+            (f"{q_clean}%", f"%{q_clean}%", f"{q_clean}%")
+        ) as cur:
+            for row in await cur.fetchall():
+                st_name = row["street_name"]
+                city_name = row["city_name"]
+                results.append({
+                    "category": "רחוב",
+                    "type": "street",
+                    "title": f"רחוב {st_name}",
+                    "subtitle": city_name,
+                    "url": f"/search?settlement={city_name}&street={st_name}"
+                })
     except Exception:
         pass
 
@@ -631,6 +635,61 @@ async def autocomplete(
     async with conn.execute(query, (f"%{q}%",)) as cur:
         rows = await cur.fetchall()
         return {"data": [dict(row) for row in rows]}
+
+@router.get("/streets/autocomplete")
+async def autocomplete_streets(
+    q: str = Query(..., min_length=1),
+    settlements: Optional[str] = Query(None),
+    limit: int = Query(15, ge=1, le=50),
+    conn: aiosqlite.Connection = Depends(get_db)
+):
+    q_clean = q.strip()
+    if not q_clean:
+        return {"data": []}
+
+    prefix = f"{q_clean}%"
+    contains = f"%{q_clean}%"
+
+    if settlements:
+        cities = [s.strip() for s in settlements.split(",") if s.strip()]
+        if cities:
+            placeholders = ",".join(["?"] * len(cities))
+            query = f"""
+                SELECT DISTINCT street_name, city_name
+                FROM streets
+                WHERE city_name IN ({placeholders})
+                  AND (street_name LIKE ? OR street_name LIKE ?)
+                ORDER BY 
+                    CASE WHEN street_name LIKE ? THEN 0 ELSE 1 END,
+                    is_official DESC,
+                    LENGTH(street_name) ASC
+                LIMIT ?
+            """
+            params = cities + [prefix, contains, prefix, limit]
+            try:
+                async with conn.execute(query, params) as cur:
+                    rows = await cur.fetchall()
+                    return {"data": [dict(r) for r in rows]}
+            except Exception:
+                return {"data": []}
+
+    query = """
+        SELECT DISTINCT street_name, city_name
+        FROM streets
+        WHERE street_name LIKE ? OR street_name LIKE ?
+        ORDER BY 
+            CASE WHEN street_name LIKE ? THEN 0 ELSE 1 END,
+            is_official DESC,
+            LENGTH(street_name) ASC
+        LIMIT ?
+    """
+    params = [prefix, contains, prefix, limit]
+    try:
+        async with conn.execute(query, params) as cur:
+            rows = await cur.fetchall()
+            return {"data": [dict(r) for r in rows]}
+    except Exception:
+        return {"data": []}
 
 @router.get("/settlement/{name}")
 async def get_settlement_profile(

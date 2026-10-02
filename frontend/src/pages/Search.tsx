@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { searchDeals, fetchNatures, fetchSearchGeo } from '../api';
 import SettlementAutocomplete from '../components/SettlementAutocomplete';
+import StreetAutocomplete from '../components/StreetAutocomplete';
 import ActiveFilters, { FilterPill } from '../components/ActiveFilters';
 import ResultsMap from '../components/ResultsMap';
 import {
@@ -158,8 +159,11 @@ export default function Search() {
     return filters;
   }, [searchParams]);
 
-  const settlements = (searchParams.get('settlements') || '').split(',').filter(Boolean);
-  const compareUrl = `/compare?settlements=${searchParams.get('settlements') || ''}&nature=${searchParams.get('nature') || ''}&date_from=${searchParams.get('date_from') || ''}&date_to=${searchParams.get('date_to') || ''}`;
+  const settlements = (searchParams.get('settlements') || searchParams.get('settlement') || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const compareUrl = `/compare?settlements=${searchParams.get('settlements') || searchParams.get('settlement') || ''}&nature=${searchParams.get('nature') || ''}&date_from=${searchParams.get('date_from') || ''}&date_to=${searchParams.get('date_to') || ''}`;
 
   // Export search results to CSV with UTF-8 BOM for Excel
   const exportToCsv = () => {
@@ -235,14 +239,23 @@ export default function Search() {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">שם רחוב</label>
-              <input
-                type="text"
-                dir="rtl"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-sm text-right placeholder:text-slate-400 font-medium"
-                placeholder="הקלד שם רחוב..."
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                <span>שם רחוב</span>
+                {settlements.length > 0 && (
+                  <span className="text-[10px] text-indigo-700 font-semibold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200/60">
+                    {settlements.length === 1 ? `מותאם ל${settlements[0]}` : `מותאם ל-${settlements.length} ערים`}
+                  </span>
+                )}
+              </label>
+              <StreetAutocomplete
                 value={localText.street ?? ''}
-                onChange={(e) => handleTextChange('street', e.target.value)}
+                settlements={settlements}
+                onChange={(streetVal, selectedCity) => {
+                  handleTextChange('street', streetVal);
+                  if (selectedCity && settlements.length === 0) {
+                    handleFilterChange('settlements', selectedCity);
+                  }
+                }}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">

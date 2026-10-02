@@ -81,6 +81,18 @@ export async function autocomplete(q: string): Promise<{ data: { settlement: str
   return { data: [] };
 }
 
+export async function autocompleteStreets(q: string, settlements?: string[]): Promise<{ data: { street_name: string; city_name: string }[] }> {
+  const searchParams = new URLSearchParams();
+  searchParams.append('q', q);
+  if (settlements && settlements.length > 0) {
+    searchParams.append('settlements', settlements.join(','));
+  }
+  const json = await fetchJson<any>(`${API_BASE}/streets/autocomplete?${searchParams.toString()}`);
+  if (Array.isArray(json)) return { data: json };
+  if (json && Array.isArray(json.data)) return json;
+  return { data: [] };
+}
+
 export async function fetchSettlementDetail(name: string): Promise<any> {
   return fetchJson<any>(`${API_BASE}/settlement/${encodeURIComponent(name)}`);
 }
