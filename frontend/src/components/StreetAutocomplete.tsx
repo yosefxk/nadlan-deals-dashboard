@@ -22,12 +22,18 @@ export default function StreetAutocomplete({
   const [query, setQuery] = useState(value || '');
   const [suggestions, setSuggestions] = useState<{ street_name: string; city_name: string }[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isSelectedRef = useRef(false);
 
   // Sync internal state when external value changes
   useEffect(() => {
-    setQuery(value || '');
+    if (value !== query) {
+      setQuery(value || '');
+      isSelectedRef.current = true;
+      setIsOpen(false);
+    }
   }, [value]);
 
   // Close dropdown on click outside
@@ -41,9 +47,12 @@ export default function StreetAutocomplete({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch suggestions with debouncing
+  // Stable string representation of settlements to prevent redundant effect triggers
+  const settlementsKey = settlements.join(',');
+
+  // Fetch suggestions with debouncing - only if actively typing
   useEffect(() => {
-    if (!query.trim()) {
+    if (isSelectedRef.current || !query.trim()) {
       setSuggestions([]);
       setIsOpen(false);
       return;
@@ -52,8 +61,14 @@ export default function StreetAutocomplete({
     const timer = setTimeout(async () => {
       try {
         const res = await autocompleteStreets(query.trim(), settlements);
-        setSuggestions(res.data || []);
-        setIsOpen((res.data || []).length > 0);
+        const data = res.data || [];
+        setSuggestions(data);
+        // Only open dropdown if the user has not selected an item and input is focused
+        if (data.length > 0 && !isSelectedRef.current && isFocused) {
+          setIsOpen(true);
+        } else {
+          setIsOpen(false);
+        }
         setHighlightedIndex(-1);
       } catch (err) {
         console.error('Error fetching street suggestions', err);
@@ -61,26 +76,30 @@ export default function StreetAutocomplete({
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [query, settlements]);
+  }, [query, settlementsKey, isFocused]);
 
   const handleSelect = (street: string, city: string) => {
+    isSelectedRef.current = true;
     setQuery(street);
+    setSuggestions([]);
+    setIsOpen(false);
     if (onSelect) {
       onSelect(street, city);
     } else {
       onChange(street);
     }
-    setIsOpen(false);
   };
 
   const handleClear = () => {
+    isSelectedRef.current = true;
     setQuery('');
-    onChange('');
-    if (onSelect) {
-      onSelect('', '');
-    }
     setSuggestions([]);
     setIsOpen(false);
+    if (onSelect) {
+      onSelect('', '');
+    } else {
+      onChange('');
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -98,8 +117,9 @@ export default function StreetAutocomplete({
         const item = suggestions[highlightedIndex];
         handleSelect(item.street_name, item.city_name);
       } else {
-        onChange(query);
+        isSelectedRef.current = true;
         setIsOpen(false);
+        onChange(query);
       }
     } else if (e.key === 'Escape') {
       setIsOpen(false);
@@ -123,11 +143,18 @@ export default function StreetAutocomplete({
           dir="rtl"
           value={query}
           onChange={(e) => {
+            isSelectedRef.current = false;
             setQuery(e.target.value);
             onChange(e.target.value);
           }}
           onFocus={() => {
-            if (suggestions.length > 0) setIsOpen(true);
+            setIsFocused(true);
+            if (!isSelectedRef.current && suggestions.length > 0) {
+              setIsOpen(true);
+            }
+          }}
+          onBlur={() => {
+            setIsFocused(false);
           }}
           onKeyDown={handleKeyDown}
           placeholder={dynamicPlaceholder}
@@ -165,11 +192,6 @@ export default function StreetAutocomplete({
                   isHighlighted ? 'bg-indigo-50 text-indigo-900 font-semibold' : 'hover:bg-slate-50 text-slate-800'
                 }`}
                 onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleSelect(item.street_name, item.city_name);
-                }}
-                onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   handleSelect(item.street_name, item.city_name);

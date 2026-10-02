@@ -48,7 +48,7 @@ export default function Dashboard() {
     try {
       const details = await getGoogleDetails(placeId);
       if (details.settlement && details.street) {
-        navigate(`/search?settlement=${encodeURIComponent(details.settlement)}&street=${encodeURIComponent(details.street)}`);
+        navigate(`/search?settlements=${encodeURIComponent(details.settlement)}&street=${encodeURIComponent(details.street)}`);
       } else if (details.settlement) {
         navigate(`/settlement/${encodeURIComponent(details.settlement)}`);
       } else {
@@ -164,7 +164,7 @@ export default function Dashboard() {
           <span className="text-slate-400 font-medium mr-1">לדוגמה:</span>
           <button onClick={() => navigate('/settlement/תל אביב -יפו')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">תל אביב</button>
           <button onClick={() => navigate('/settlement/ירושלים')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">ירושלים</button>
-          <button onClick={() => navigate('/search?street=דיזנגוף&settlement=תל אביב -יפו')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">דיזנגוף ת״א</button>
+          <button onClick={() => navigate('/search?street=דיזנגוף&settlements=תל אביב -יפו')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">דיזנגוף ת״א</button>
           <button onClick={() => navigate('/parcel/6903/104')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">גוש 6903/104</button>
           <button onClick={() => navigate('/search?nature=דירה בבית קומות')} className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 transition-colors">דירה בבית קומות</button>
         </div>

@@ -124,6 +124,12 @@ export default function SettlementAutocomplete({
             onFocus={() => setIsOpen(true)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') setIsOpen(false);
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (suggestions.length > 0) {
+                  handleSelect(suggestions[0].settlement);
+                }
+              }
             }}
           />
         </div>
@@ -135,6 +141,10 @@ export default function SettlementAutocomplete({
               type="button"
               key={item.settlement}
               className="w-full text-right px-4 py-2 hover:bg-indigo-50/60 flex justify-between items-center focus:outline-none focus:bg-indigo-50/80 transition-colors border-b border-slate-50 last:border-b-0"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleSelect(item.settlement);
+              }}
               onClick={() => handleSelect(item.settlement)}
             >
               <span className="text-sm font-medium text-slate-800">{item.settlement}</span>

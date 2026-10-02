@@ -638,13 +638,16 @@ async def omnisearch(
         })
 
     # 2. Local Database: Settlements matching
+    city_variants = get_city_variants(q_clean)
+    settlement_clauses = " OR ".join(["settlement LIKE ?"] * len(city_variants))
+    settlement_params = [f"%{v}%" for v in city_variants]
     async with conn.execute(
-        """SELECT settlement, COUNT(*) as deals 
+        f"""SELECT settlement, COUNT(*) as deals 
            FROM deals 
-           WHERE settlement LIKE ? 
+           WHERE {settlement_clauses} 
            GROUP BY settlement 
            ORDER BY deals DESC LIMIT 4""",
-        (f"%{q_clean}%",)
+        settlement_params
     ) as cur:
         for row in await cur.fetchall():
             results.append({
@@ -676,7 +679,7 @@ async def omnisearch(
                     "type": "street",
                     "title": f"רחוב {st_name}",
                     "subtitle": city_name,
-                    "url": f"/search?settlement={city_name}&street={st_name}"
+                    "url": f"/search?settlements={city_name}&street={st_name}"
                 })
     except Exception:
         pass
@@ -715,15 +718,21 @@ async def autocomplete(
     q: str,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
-    query = """
+    q_clean = q.strip()
+    if not q_clean:
+        return {"data": []}
+    variants = get_city_variants(q_clean)
+    clauses = " OR ".join(["settlement LIKE ?"] * len(variants))
+    params = [f"%{v}%" for v in variants]
+    query = f"""
         SELECT settlement, COUNT(*) as deals 
         FROM deals 
-        WHERE settlement LIKE ? 
+        WHERE {clauses}
         GROUP BY settlement 
         ORDER BY deals DESC 
         LIMIT 10
     """
-    async with conn.execute(query, (f"%{q}%",)) as cur:
+    async with conn.execute(query, params) as cur:
         rows = await cur.fetchall()
         return {"data": [dict(row) for row in rows]}
 
@@ -742,7 +751,11 @@ async def autocomplete_streets(
     contains = f"%{q_clean}%"
 
     if settlements:
-        cities = [s.strip() for s in settlements.split(",") if s.strip()]
+        raw_cities = [s.strip() for s in settlements.split(",") if s.strip()]
+        cities = []
+        for rc in raw_cities:
+            cities.extend(get_city_variants(rc))
+        cities = list(dict.fromkeys(cities))
         if cities:
             placeholders = ",".join(["?"] * len(cities))
             query = f"""

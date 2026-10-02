@@ -75,6 +75,10 @@ export default function Search() {
       const val = searchParams.get(key);
       if (val) params[key] = isNaN(Number(val)) || key === 'settlements' || key === 'street' || key.includes('date') || key === 'sort' ? val : Number(val);
     }
+    const rawSettlement = searchParams.get('settlements') || searchParams.get('settlement');
+    if (rawSettlement) {
+      params['settlements'] = rawSettlement;
+    }
     return params;
   }, [searchParams]);
 
@@ -115,6 +119,9 @@ export default function Search() {
 
   const handleFilterChange = (key: string, value: any) => {
     const newParams = new URLSearchParams(searchParams);
+    if (key === 'settlements') {
+      newParams.delete('settlement');
+    }
     if (value === '' || value === undefined || value === null) {
       newParams.delete(key);
     } else {
@@ -136,7 +143,8 @@ export default function Search() {
       if (val) filters.push({ key, label, value: formatter ? formatter(val) : val });
     };
     
-    add('settlements', 'יישובים');
+    const rawSettlements = searchParams.get('settlements') || searchParams.get('settlement');
+    if (rawSettlements) filters.push({ key: 'settlements', label: 'יישובים', value: rawSettlements });
     add('street', 'רחוב');
     add('gush', 'גוש');
     add('helka', 'חלקה');
@@ -159,10 +167,10 @@ export default function Search() {
     return filters;
   }, [searchParams]);
 
-  const settlements = (searchParams.get('settlements') || searchParams.get('settlement') || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  const settlements = useMemo(() => {
+    const raw = searchParams.get('settlements') || searchParams.get('settlement') || '';
+    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  }, [searchParams]);
   const compareUrl = `/compare?settlements=${searchParams.get('settlements') || searchParams.get('settlement') || ''}&nature=${searchParams.get('nature') || ''}&date_from=${searchParams.get('date_from') || ''}&date_to=${searchParams.get('date_to') || ''}`;
 
   // Export search results to CSV with UTF-8 BOM for Excel
@@ -264,6 +272,7 @@ export default function Search() {
                   }
                   if (selectedCity && settlements.length === 0) {
                     newParams.set('settlements', selectedCity);
+                    newParams.delete('settlement');
                   }
                   newParams.set('offset', '0');
                   setSearchParams(newParams);
