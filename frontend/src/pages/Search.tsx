@@ -250,11 +250,23 @@ export default function Search() {
               <StreetAutocomplete
                 value={localText.street ?? ''}
                 settlements={settlements}
-                onChange={(streetVal, selectedCity) => {
+                onChange={(streetVal) => {
                   handleTextChange('street', streetVal);
-                  if (selectedCity && settlements.length === 0) {
-                    handleFilterChange('settlements', selectedCity);
+                }}
+                onSelect={(streetVal, selectedCity) => {
+                  if (textUpdateTimeout.current) clearTimeout(textUpdateTimeout.current);
+                  setLocalText((prev) => ({ ...prev, street: streetVal }));
+                  const newParams = new URLSearchParams(searchParams);
+                  if (streetVal) {
+                    newParams.set('street', streetVal);
+                  } else {
+                    newParams.delete('street');
                   }
+                  if (selectedCity && settlements.length === 0) {
+                    newParams.set('settlements', selectedCity);
+                  }
+                  newParams.set('offset', '0');
+                  setSearchParams(newParams);
                 }}
               />
             </div>

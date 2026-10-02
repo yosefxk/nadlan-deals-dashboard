@@ -10,24 +10,57 @@ from pathlib import Path
 
 router = APIRouter(prefix="/api")
 
+_street_parcels_cache: dict[tuple, list[tuple[str, str]]] = {}
+
+def get_city_variants(city: str) -> list[str]:
+    variants = {city}
+    if 'יי' in city:
+        variants.add(city.replace('יי', 'י'))
+    if 'י' in city and 'יי' not in city:
+        variants.add(city.replace('י', 'יי'))
+    if 'וו' in city:
+        variants.add(city.replace('וו', 'ו'))
+    if 'קרית ' in city:
+        variants.add(city.replace('קרית ', 'קריית '))
+    if 'קריית ' in city:
+        variants.add(city.replace('קריית ', 'קרית '))
+    if ' - ' in city:
+        variants.add(city.replace(' - ', ' -'))
+        variants.add(city.replace(' - ', '-'))
+    elif ' -' in city:
+        variants.add(city.replace(' -', ' - '))
+        variants.add(city.replace(' -', '-'))
+    elif '-' in city:
+        variants.add(city.replace('-', ' - '))
+        variants.add(city.replace('-', ' -'))
+    return list(variants)
+
 async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None) -> list[tuple[str, str]]:
-    params = {"city": settlement, "street": street}
-    if house:
-        params["number"] = house
-    try:
-        async with httpx.AsyncClient(timeout=2.5) as client:
-            resp = await client.get("https://www.over.org.il/api/nadlan/address", params=params)
-            if resp.status_code == 200:
-                data = resp.json().get("data", [])
-                pairs = []
-                for p in data:
-                    ident = p.get("identity", {})
-                    g, h = ident.get("gush"), ident.get("helka")
-                    if g and h:
-                        pairs.append((str(g), str(h)))
-                return pairs
-    except Exception:
-        pass
+    key = (settlement, street, house or "")
+    if key in _street_parcels_cache:
+        return _street_parcels_cache[key]
+
+    cities_to_try = get_city_variants(settlement)
+    for c in cities_to_try:
+        params = {"city": c, "street": street}
+        if house:
+            params["number"] = house
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get("https://www.over.org.il/api/nadlan/address", params=params)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    pairs = []
+                    for p in data:
+                        ident = p.get("identity", {})
+                        g, h = ident.get("gush"), ident.get("helka")
+                        if g and h:
+                            pairs.append((str(g), str(h)))
+                    if pairs:
+                        _street_parcels_cache[key] = pairs
+                        return pairs
+        except Exception:
+            pass
     return []
 
 @router.get("/search", response_model=SearchResponse)
@@ -78,9 +111,25 @@ async def search_deals(
             query_parts.append("(settlement LIKE ? OR nature LIKE ?)")
             params.extend([f"%{q_clean}%", f"%{q_clean}%"])
 
-    if settlement:
-        query_parts.append("settlement = ?")
-        params.append(settlement)
+    active_cities = []
+    if settlements:
+        s_list = [s.strip() for s in settlements.split(",") if s.strip()]
+        expanded = []
+        for s in s_list:
+            expanded.extend(get_city_variants(s))
+        if expanded:
+            expanded = list(dict.fromkeys(expanded))
+            placeholders = ",".join(["?"] * len(expanded))
+            query_parts.append(f"settlement IN ({placeholders})")
+            params.extend(expanded)
+            active_cities = s_list
+    elif settlement:
+        expanded = get_city_variants(settlement)
+        placeholders = ",".join(["?"] * len(expanded))
+        query_parts.append(f"settlement IN ({placeholders})")
+        params.extend(expanded)
+        active_cities = [settlement]
+
     if settlement_code:
         query_parts.append("settlement_code = ?")
         params.append(settlement_code)
@@ -114,12 +163,6 @@ async def search_deals(
     if max_rooms:
         query_parts.append("rooms <= ?")
         params.append(max_rooms)
-    if settlements:
-        s_list = [s.strip() for s in settlements.split(",") if s.strip()]
-        if s_list:
-            placeholders = ",".join(["?"] * len(s_list))
-            query_parts.append(f"settlement IN ({placeholders})")
-            params.extend(s_list)
     if min_ppsqm is not None:
         query_parts.append("price_per_sqm_normalized >= ?")
         params.append(min_ppsqm)
@@ -147,9 +190,28 @@ async def search_deals(
 
     if street:
         parcels = []
-        if settlement:
-            parcels = await resolve_street_parcels(settlement, street, house)
+        if active_cities:
+            for c in active_cities:
+                p_list = await resolve_street_parcels(c, street, house)
+                if p_list:
+                    parcels.extend(p_list)
+        else:
+            try:
+                async with conn.execute(
+                    "SELECT DISTINCT city_name FROM streets WHERE street_name = ? OR street_name LIKE ? LIMIT 3",
+                    (street, f"%{street}%")
+                ) as cur:
+                    candidate_cities = [r["city_name"] for r in await cur.fetchall()]
+                for c in candidate_cities:
+                    p_list = await resolve_street_parcels(c, street, house)
+                    if p_list:
+                        parcels.extend(p_list)
+                        break
+            except Exception:
+                pass
+
         if parcels:
+            parcels = list(dict.fromkeys(parcels))
             parcel_clauses = " OR ".join(["(gush = ? AND helka = ?)"] * len(parcels[:200]))
             query_parts.append(f"({parcel_clauses})")
             for g, h in parcels[:200]:
@@ -264,9 +326,25 @@ async def search_deals_geo(
             query_parts.append("(d.settlement LIKE ? OR d.nature LIKE ?)")
             params.extend([f"%{q_clean}%", f"%{q_clean}%"])
 
-    if settlement:
-        query_parts.append("d.settlement = ?")
-        params.append(settlement)
+    active_cities = []
+    if settlements:
+        s_list = [s.strip() for s in settlements.split(",") if s.strip()]
+        expanded = []
+        for s in s_list:
+            expanded.extend(get_city_variants(s))
+        if expanded:
+            expanded = list(dict.fromkeys(expanded))
+            placeholders = ",".join(["?"] * len(expanded))
+            query_parts.append(f"d.settlement IN ({placeholders})")
+            params.extend(expanded)
+            active_cities = s_list
+    elif settlement:
+        expanded = get_city_variants(settlement)
+        placeholders = ",".join(["?"] * len(expanded))
+        query_parts.append(f"d.settlement IN ({placeholders})")
+        params.extend(expanded)
+        active_cities = [settlement]
+
     if settlement_code:
         query_parts.append("d.settlement_code = ?")
         params.append(settlement_code)
@@ -300,12 +378,6 @@ async def search_deals_geo(
     if max_rooms:
         query_parts.append("d.rooms <= ?")
         params.append(max_rooms)
-    if settlements:
-        s_list = [s.strip() for s in settlements.split(",") if s.strip()]
-        if s_list:
-            placeholders = ",".join(["?"] * len(s_list))
-            query_parts.append(f"d.settlement IN ({placeholders})")
-            params.extend(s_list)
     if min_ppsqm is not None:
         query_parts.append("d.price_per_sqm_normalized >= ?")
         params.append(min_ppsqm)
@@ -333,9 +405,28 @@ async def search_deals_geo(
 
     if street:
         parcels = []
-        if settlement:
-            parcels = await resolve_street_parcels(settlement, street, house)
+        if active_cities:
+            for c in active_cities:
+                p_list = await resolve_street_parcels(c, street, house)
+                if p_list:
+                    parcels.extend(p_list)
+        else:
+            try:
+                async with conn.execute(
+                    "SELECT DISTINCT city_name FROM streets WHERE street_name = ? OR street_name LIKE ? LIMIT 3",
+                    (street, f"%{street}%")
+                ) as cur:
+                    candidate_cities = [r["city_name"] for r in await cur.fetchall()]
+                for c in candidate_cities:
+                    p_list = await resolve_street_parcels(c, street, house)
+                    if p_list:
+                        parcels.extend(p_list)
+                        break
+            except Exception:
+                pass
+
         if parcels:
+            parcels = list(dict.fromkeys(parcels))
             parcel_clauses = " OR ".join(["(d.gush = ? AND d.helka = ?)"] * len(parcels[:200]))
             query_parts.append(f"({parcel_clauses})")
             for g, h in parcels[:200]:

@@ -4,7 +4,8 @@ import { autocompleteStreets } from '../api';
 
 interface Props {
   value: string;
-  onChange: (street: string, selectedCity?: string) => void;
+  onChange: (street: string) => void;
+  onSelect?: (street: string, selectedCity?: string) => void;
   settlements?: string[];
   placeholder?: string;
   className?: string;
@@ -13,6 +14,7 @@ interface Props {
 export default function StreetAutocomplete({
   value,
   onChange,
+  onSelect,
   settlements = [],
   placeholder,
   className = '',
@@ -63,13 +65,20 @@ export default function StreetAutocomplete({
 
   const handleSelect = (street: string, city: string) => {
     setQuery(street);
-    onChange(street, city);
+    if (onSelect) {
+      onSelect(street, city);
+    } else {
+      onChange(street);
+    }
     setIsOpen(false);
   };
 
   const handleClear = () => {
     setQuery('');
     onChange('');
+    if (onSelect) {
+      onSelect('', '');
+    }
     setSuggestions([]);
     setIsOpen(false);
   };
@@ -155,7 +164,16 @@ export default function StreetAutocomplete({
                 className={`w-full px-3 py-2 text-right text-xs transition-colors flex items-center justify-between gap-2 ${
                   isHighlighted ? 'bg-indigo-50 text-indigo-900 font-semibold' : 'hover:bg-slate-50 text-slate-800'
                 }`}
-                onClick={() => handleSelect(item.street_name, item.city_name)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSelect(item.street_name, item.city_name);
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSelect(item.street_name, item.city_name);
+                }}
                 onMouseEnter={() => setHighlightedIndex(idx)}
               >
                 <div className="flex items-center gap-2">
