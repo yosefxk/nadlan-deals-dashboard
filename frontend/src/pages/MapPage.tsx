@@ -422,7 +422,15 @@ export default function MapPage() {
                   const color = getColor(val);
                   const isSelected = selectedSettlement === s.settlement;
                   const isHovered = hoveredSettlement === s.settlement;
-                  const polyCoords = polygonsData?.[s.settlement];
+                  const polyCoords = polygonsData ? (
+                    polygonsData[s.settlement] ||
+                    polygonsData[s.settlement.replace(' - ', ' -')] ||
+                    polygonsData[s.settlement.replace(' -', ' - ')] ||
+                    polygonsData[s.settlement.replace('יי', 'י')] ||
+                    polygonsData[s.settlement.replace('י', 'יי')] ||
+                    polygonsData[s.settlement.replace('קריית ', 'קרית ')] ||
+                    polygonsData[s.settlement.replace('קרית ', 'קריית ')]
+                  ) : null;
 
                   const popupContent = (
                     <Popup>
