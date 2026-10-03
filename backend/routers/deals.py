@@ -71,34 +71,39 @@ async def resolve_street_parcels(settlement: str, street: str, house: Optional[s
                     data = resp_json.get("data", [])
                     pairs = []
                     for p in data:
-                        ident = p.get("identity", {})
-                        g, h = ident.get("gush"), ident.get("helka")
-                        if g and h:
-                            pairs.append((str(g), str(h)))
+                        if isinstance(p, dict):
+                            ident = p.get("identity") or {}
+                            g, h = ident.get("gush"), ident.get("helka")
+                            if g and h:
+                                pairs.append((str(g), str(h)))
 
                     # Extract addresses list and persist into parcel_addresses
                     for addr in resp_json.get("addresses", []):
-                        pk = addr.get("parcel_key", "")
-                        pk_parts = pk.split("-")
-                        if len(pk_parts) >= 3:
-                            g, h = str(pk_parts[0]), str(pk_parts[2])
-                            pairs.append((g, h))
-                            if conn:
-                                s_name = addr.get("settlement_name") or settlement
-                                st_name = addr.get("street_name") or street
-                                h_num = str(addr.get("house_num") or "")
-                                lat = addr.get("lat")
-                                lon = addr.get("lon")
-                                full_addr = f"{st_name} {h_num}, {s_name}".strip(", ")
-                                try:
-                                    await conn.execute(
-                                        """INSERT OR REPLACE INTO parcel_addresses 
-                                           (gush, helka, settlement, street, house_num, full_address, lat, lon) 
-                                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                                        (g, h, s_name, st_name, h_num, full_addr, lat, lon)
-                                    )
-                                except Exception:
-                                    pass
+                        if not isinstance(addr, dict):
+                            continue
+                        pk = addr.get("parcel_key") or ""
+                        if pk and "-" in pk:
+                            pk_parts = pk.split("-")
+                            if len(pk_parts) >= 3 and pk_parts[0] and pk_parts[2]:
+                                g, h = str(pk_parts[0]), str(pk_parts[2])
+                                pairs.append((g, h))
+                                if conn:
+                                    s_name = addr.get("settlement_name") or settlement
+                                    st_name = addr.get("street_name") or street
+                                    h_num = str(addr.get("house_num") or "") if addr.get("house_num") is not None else ""
+                                    lat = addr.get("lat")
+                                    lon = addr.get("lon")
+                                    h_str = f" {h_num}" if h_num else ""
+                                    full_addr = f"{st_name}{h_str}, {s_name}".strip(", ")
+                                    try:
+                                        await conn.execute(
+                                            """INSERT OR REPLACE INTO parcel_addresses 
+                                               (gush, helka, settlement, street, house_num, full_address, lat, lon) 
+                                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                            (g, h, s_name, st_name, h_num, full_addr, lat, lon)
+                                        )
+                                    except Exception:
+                                        pass
 
                     if conn:
                         try:
