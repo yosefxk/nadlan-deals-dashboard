@@ -14,6 +14,9 @@ export interface Deal {
   helka: string;
   addresses: string[];
   floor: number | null;
+  street?: string | null;
+  house_num?: string | null;
+  full_address?: string | null;
 }
 
 export interface Stats {

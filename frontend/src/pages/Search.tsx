@@ -179,6 +179,9 @@ export default function Search() {
     const headers = [
       'תאריך',
       'יישוב',
+      'רחוב',
+      'מספר בית',
+      'כתובת מלאה',
       'סוג נכס',
       'סכום עסקה (₪)',
       'מחיר למ״ר (₪)',
@@ -192,6 +195,9 @@ export default function Search() {
     const rows = searchData.data.map((d: Deal) => [
       d.date,
       `"${(d.settlement || '').replace(/"/g, '""')}"`,
+      `"${(d.street || '').replace(/"/g, '""')}"`,
+      `"${(d.house_num || '').replace(/"/g, '""')}"`,
+      `"${(d.full_address || '').replace(/"/g, '""')}"`,
       `"${(d.nature || '').replace(/"/g, '""')}"`,
       d.amount ?? '',
       d.price_per_sqm_normalized ?? '',
@@ -563,7 +569,7 @@ export default function Search() {
               <thead className="bg-slate-50 text-slate-600 font-semibold text-xs border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-4">תאריך</th>
-                  <th className="py-3 px-4">יישוב</th>
+                  <th className="py-3 px-4">מיקום וכתובת</th>
                   <th className="py-3 px-4">סוג נכס</th>
                   <th className="py-3 px-4">סכום עסקה</th>
                   <th className="py-3 px-4">שטח (מ״ר)</th>
@@ -592,14 +598,30 @@ export default function Search() {
                       <td className="py-3 px-4 whitespace-nowrap text-xs text-slate-600 font-mono">
                         {deal.date}
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/settlement/${encodeURIComponent(deal.settlement)}`)}
-                          className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline"
-                        >
-                          {deal.settlement}
-                        </button>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-col">
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/settlement/${encodeURIComponent(deal.settlement)}`)}
+                            className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline text-right truncate"
+                          >
+                            {deal.settlement}
+                          </button>
+                          {deal.street ? (
+                            <div className="flex items-center gap-1 text-xs text-slate-700 mt-0.5 font-medium whitespace-nowrap">
+                              <MapPin size={11} className="text-amber-600 shrink-0" />
+                              <span>
+                                {deal.street}
+                                {deal.house_num ? ` ${deal.house_num}` : ''}
+                              </span>
+                            </div>
+                          ) : deal.full_address ? (
+                            <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5 whitespace-nowrap">
+                              <MapPin size={11} className="text-slate-400 shrink-0" />
+                              <span>{deal.full_address}</span>
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-xs font-medium text-slate-700">
                         {deal.nature || '—'}

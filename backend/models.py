@@ -27,6 +27,9 @@ class DealRow(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
     distance: Optional[float] = None
+    street: Optional[str] = None
+    house_num: Optional[str] = None
+    full_address: Optional[str] = None
 
 class SearchSummary(BaseModel):
     median_amount: Optional[float] = None

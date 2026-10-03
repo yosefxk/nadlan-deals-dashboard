@@ -35,28 +35,79 @@ def get_city_variants(city: str) -> list[str]:
         variants.add(city.replace('-', ' -'))
     return list(variants)
 
-async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None) -> list[tuple[str, str]]:
+async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None, conn: Optional[aiosqlite.Connection] = None) -> list[tuple[str, str]]:
     key = (settlement, street, house or "")
     if key in _street_parcels_cache:
         return _street_parcels_cache[key]
 
     cities_to_try = get_city_variants(settlement)
+
+    # 1. Check local parcel_addresses database if connection provided
+    if conn:
+        try:
+            placeholders = ",".join(["?"] * len(cities_to_try))
+            async with conn.execute(
+                f"SELECT DISTINCT gush, helka FROM parcel_addresses WHERE settlement IN ({placeholders}) AND street = ?",
+                cities_to_try + [street]
+            ) as cur:
+                rows = await cur.fetchall()
+                if rows:
+                    db_pairs = [(str(r[0]), str(r[1])) for r in rows if r[0] and r[1]]
+                    if db_pairs:
+                        _street_parcels_cache[key] = db_pairs
+                        return db_pairs
+        except Exception:
+            pass
+
     for c in cities_to_try:
         params = {"city": c, "street": street}
         if house:
             params["number"] = house
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
+            async with httpx.AsyncClient(timeout=3.5) as client:
                 resp = await client.get("https://www.over.org.il/api/nadlan/address", params=params)
                 if resp.status_code == 200:
-                    data = resp.json().get("data", [])
+                    resp_json = resp.json()
+                    data = resp_json.get("data", [])
                     pairs = []
                     for p in data:
                         ident = p.get("identity", {})
                         g, h = ident.get("gush"), ident.get("helka")
                         if g and h:
                             pairs.append((str(g), str(h)))
+
+                    # Extract addresses list and persist into parcel_addresses
+                    for addr in resp_json.get("addresses", []):
+                        pk = addr.get("parcel_key", "")
+                        pk_parts = pk.split("-")
+                        if len(pk_parts) >= 3:
+                            g, h = str(pk_parts[0]), str(pk_parts[2])
+                            pairs.append((g, h))
+                            if conn:
+                                s_name = addr.get("settlement_name") or settlement
+                                st_name = addr.get("street_name") or street
+                                h_num = str(addr.get("house_num") or "")
+                                lat = addr.get("lat")
+                                lon = addr.get("lon")
+                                full_addr = f"{st_name} {h_num}, {s_name}".strip(", ")
+                                try:
+                                    await conn.execute(
+                                        """INSERT OR REPLACE INTO parcel_addresses 
+                                           (gush, helka, settlement, street, house_num, full_address, lat, lon) 
+                                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        (g, h, s_name, st_name, h_num, full_addr, lat, lon)
+                                    )
+                                except Exception:
+                                    pass
+
+                    if conn:
+                        try:
+                            await conn.commit()
+                        except Exception:
+                            pass
+
                     if pairs:
+                        pairs = list(dict.fromkeys(pairs))
                         _street_parcels_cache[key] = pairs
                         return pairs
         except Exception:
@@ -192,7 +243,7 @@ async def search_deals(
         parcels = []
         if active_cities:
             for c in active_cities:
-                p_list = await resolve_street_parcels(c, street, house)
+                p_list = await resolve_street_parcels(c, street, house, conn=conn)
                 if p_list:
                     parcels.extend(p_list)
         else:
@@ -203,7 +254,7 @@ async def search_deals(
                 ) as cur:
                     candidate_cities = [r["city_name"] for r in await cur.fetchall()]
                 for c in candidate_cities:
-                    p_list = await resolve_street_parcels(c, street, house)
+                    p_list = await resolve_street_parcels(c, street, house, conn=conn)
                     if p_list:
                         parcels.extend(p_list)
                         break
@@ -264,12 +315,25 @@ async def search_deals(
                     "avg_area": round(s_row["avg_area"], 1) if s_row["avg_area"] is not None else None
                 }
 
-    data_query = f"SELECT * FROM deals WHERE {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?"
+    data_query = f"""
+        SELECT d.*, pa.street, pa.house_num, pa.full_address
+        FROM (
+            SELECT * FROM deals WHERE {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?
+        ) d
+        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
+    """
     data_params = params + [limit, offset]
     
     async with conn.execute(data_query, data_params) as d_cur:
         rows = await d_cur.fetchall()
         data = [dict(row) for row in rows]
+
+    for row in data:
+        if not row.get("street") and street:
+            row["street"] = street
+        if not row.get("full_address") and row.get("street"):
+            h_part = f" {row['house_num']}" if row.get("house_num") else ""
+            row["full_address"] = f"{row['street']}{h_part}, {row.get('settlement') or ''}".strip(", ")
 
     return SearchResponse(
         data=data,
@@ -407,7 +471,7 @@ async def search_deals_geo(
         parcels = []
         if active_cities:
             for c in active_cities:
-                p_list = await resolve_street_parcels(c, street, house)
+                p_list = await resolve_street_parcels(c, street, house, conn=conn)
                 if p_list:
                     parcels.extend(p_list)
         else:
@@ -418,7 +482,7 @@ async def search_deals_geo(
                 ) as cur:
                     candidate_cities = [r["city_name"] for r in await cur.fetchall()]
                 for c in candidate_cities:
-                    p_list = await resolve_street_parcels(c, street, house)
+                    p_list = await resolve_street_parcels(c, street, house, conn=conn)
                     if p_list:
                         parcels.extend(p_list)
                         break
@@ -456,7 +520,7 @@ async def search_deals_geo(
         order_by = "d.rooms DESC"
 
     data_query = f'''
-        SELECT d.*, pa.lat, pa.lon, pa.street as pa_street
+        SELECT d.*, pa.lat, pa.lon, pa.street, pa.house_num, pa.full_address
         FROM deals d 
         LEFT JOIN parcel_addresses pa ON d.gush = pa.gush AND d.helka = pa.helka
         WHERE {where_clause} 
@@ -467,6 +531,13 @@ async def search_deals_geo(
     async with conn.execute(data_query, params) as d_cur:
         rows = await d_cur.fetchall()
         data = [dict(row) for row in rows]
+
+    for row in data:
+        if not row.get("street") and street:
+            row["street"] = street
+        if not row.get("full_address") and row.get("street"):
+            h_part = f" {row['house_num']}" if row.get("house_num") else ""
+            row["full_address"] = f"{row['street']}{h_part}, {row.get('settlement') or ''}".strip(", ")
         
     resolved_count = 0
     for row in data:
