@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Optional, List
 from database import get_db
 from models import SearchResponse, DealRow
+from settlements import get_city_variants, resolve_canonical_settlement, clean_street_and_house
 import aiosqlite
 import httpx
 import re
@@ -12,31 +13,12 @@ router = APIRouter(prefix="/api")
 
 _street_parcels_cache: dict[tuple, list[tuple[str, str]]] = {}
 
-def get_city_variants(city: str) -> list[str]:
-    variants = {city}
-    if 'יי' in city:
-        variants.add(city.replace('יי', 'י'))
-    if 'י' in city and 'יי' not in city:
-        variants.add(city.replace('י', 'יי'))
-    if 'וו' in city:
-        variants.add(city.replace('וו', 'ו'))
-    if 'קרית ' in city:
-        variants.add(city.replace('קרית ', 'קריית '))
-    if 'קריית ' in city:
-        variants.add(city.replace('קריית ', 'קרית '))
-    if ' - ' in city:
-        variants.add(city.replace(' - ', ' -'))
-        variants.add(city.replace(' - ', '-'))
-    elif ' -' in city:
-        variants.add(city.replace(' -', ' - '))
-        variants.add(city.replace(' -', '-'))
-    elif '-' in city:
-        variants.add(city.replace('-', ' - '))
-        variants.add(city.replace('-', ' -'))
-    return list(variants)
-
 async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None, conn: Optional[aiosqlite.Connection] = None) -> list[tuple[str, str]]:
-    key = (settlement, street, house or "")
+    clean_st, clean_h = clean_street_and_house(street, house)
+    if not clean_st:
+        return []
+
+    key = (settlement, clean_st, clean_h or "")
     if key in _street_parcels_cache:
         return _street_parcels_cache[key]
 
@@ -46,10 +28,18 @@ async def resolve_street_parcels(settlement: str, street: str, house: Optional[s
     if conn:
         try:
             placeholders = ",".join(["?"] * len(cities_to_try))
-            async with conn.execute(
-                f"SELECT DISTINCT gush, helka FROM parcel_addresses WHERE settlement IN ({placeholders}) AND street = ?",
-                cities_to_try + [street]
-            ) as cur:
+            if clean_h:
+                num_only = re.sub(r'\D.*', '', clean_h)
+                query = f"""
+                    SELECT DISTINCT gush, helka FROM parcel_addresses 
+                    WHERE settlement IN ({placeholders}) AND street = ? AND (house_num = ? OR house_num = ?)
+                """
+                q_params = cities_to_try + [clean_st, clean_h, num_only]
+            else:
+                query = f"SELECT DISTINCT gush, helka FROM parcel_addresses WHERE settlement IN ({placeholders}) AND street = ?"
+                q_params = cities_to_try + [clean_st]
+
+            async with conn.execute(query, q_params) as cur:
                 rows = await cur.fetchall()
                 if rows:
                     db_pairs = [(str(r[0]), str(r[1])) for r in rows if r[0] and r[1]]
@@ -60,9 +50,9 @@ async def resolve_street_parcels(settlement: str, street: str, house: Optional[s
             pass
 
     for c in cities_to_try:
-        params = {"city": c, "street": street}
-        if house:
-            params["number"] = house
+        params = {"city": c, "street": clean_st}
+        if clean_h:
+            params["number"] = clean_h
         try:
             async with httpx.AsyncClient(timeout=3.5) as client:
                 resp = await client.get("https://www.over.org.il/api/nadlan/address", params=params)
@@ -89,7 +79,7 @@ async def resolve_street_parcels(settlement: str, street: str, house: Optional[s
                                 pairs.append((g, h))
                                 if conn:
                                     s_name = addr.get("settlement_name") or settlement
-                                    st_name = addr.get("street_name") or street
+                                    st_name = addr.get("street_name") or clean_st
                                     h_num = str(addr.get("house_num") or "") if addr.get("house_num") is not None else ""
                                     lat = addr.get("lat")
                                     lon = addr.get("lon")
@@ -117,6 +107,14 @@ async def resolve_street_parcels(settlement: str, street: str, house: Optional[s
                         return pairs
         except Exception:
             pass
+
+    # Fallback: if specific house yielded no parcels, fall back to resolving whole street
+    if clean_h:
+        street_only_pairs = await resolve_street_parcels(settlement, clean_st, house=None, conn=conn)
+        if street_only_pairs:
+            _street_parcels_cache[key] = street_only_pairs
+            return street_only_pairs
+
     return []
 
 @router.get("/search", response_model=SearchResponse)
@@ -164,8 +162,15 @@ async def search_deals(
             query_parts.append("(gush = ? OR helka = ? OR settlement_code = ?)")
             params.extend([q_clean, q_clean, q_clean])
         else:
-            query_parts.append("(settlement LIKE ? OR nature LIKE ?)")
-            params.extend([f"%{q_clean}%", f"%{q_clean}%"])
+            q_variants = get_city_variants(q_clean)
+            if q_variants:
+                pl = ",".join(["?"] * len(q_variants))
+                query_parts.append(f"(settlement IN ({pl}) OR nature LIKE ?)")
+                params.extend(q_variants)
+                params.append(f"%{q_clean}%")
+            else:
+                query_parts.append("(settlement LIKE ? OR nature LIKE ?)")
+                params.extend([f"%{q_clean}%", f"%{q_clean}%"])
 
     active_cities = []
     if settlements:
@@ -245,21 +250,22 @@ async def search_deals(
         params.append(year_built_to)
 
     if street:
+        clean_st, clean_h = clean_street_and_house(street, house)
         parcels = []
         if active_cities:
             for c in active_cities:
-                p_list = await resolve_street_parcels(c, street, house, conn=conn)
+                p_list = await resolve_street_parcels(c, clean_st, clean_h, conn=conn)
                 if p_list:
                     parcels.extend(p_list)
         else:
             try:
                 async with conn.execute(
                     "SELECT DISTINCT city_name FROM streets WHERE street_name = ? OR street_name LIKE ? LIMIT 3",
-                    (street, f"%{street}%")
+                    (clean_st, f"%{clean_st}%")
                 ) as cur:
                     candidate_cities = [r["city_name"] for r in await cur.fetchall()]
                 for c in candidate_cities:
-                    p_list = await resolve_street_parcels(c, street, house, conn=conn)
+                    p_list = await resolve_street_parcels(c, clean_st, clean_h, conn=conn)
                     if p_list:
                         parcels.extend(p_list)
                         break
@@ -268,13 +274,14 @@ async def search_deals(
 
         if parcels:
             parcels = list(dict.fromkeys(parcels))
-            parcel_clauses = " OR ".join(["(gush = ? AND helka = ?)"] * len(parcels[:200]))
+            max_parcels = min(len(parcels), 500)
+            parcel_clauses = " OR ".join(["(gush = ? AND helka = ?)"] * max_parcels)
             query_parts.append(f"({parcel_clauses})")
-            for g, h in parcels[:200]:
+            for g, h in parcels[:max_parcels]:
                 params.extend([g, h])
         else:
             query_parts.append("(settlement LIKE ? OR addresses LIKE ?)")
-            params.extend([f"%{street}%", f"%{street}%"])
+            params.extend([f"%{clean_st}%", f"%{clean_st}%"])
     
     where_clause = " AND ".join(query_parts) if query_parts else "1=1"
     
@@ -392,8 +399,15 @@ async def search_deals_geo(
             query_parts.append("(d.gush = ? OR d.helka = ? OR d.settlement_code = ?)")
             params.extend([q_clean, q_clean, q_clean])
         else:
-            query_parts.append("(d.settlement LIKE ? OR d.nature LIKE ?)")
-            params.extend([f"%{q_clean}%", f"%{q_clean}%"])
+            q_variants = get_city_variants(q_clean)
+            if q_variants:
+                pl = ",".join(["?"] * len(q_variants))
+                query_parts.append(f"(d.settlement IN ({pl}) OR d.nature LIKE ?)")
+                params.extend(q_variants)
+                params.append(f"%{q_clean}%")
+            else:
+                query_parts.append("(d.settlement LIKE ? OR d.nature LIKE ?)")
+                params.extend([f"%{q_clean}%", f"%{q_clean}%"])
 
     active_cities = []
     if settlements:
@@ -473,21 +487,22 @@ async def search_deals_geo(
         params.append(year_built_to)
 
     if street:
+        clean_st, clean_h = clean_street_and_house(street, house)
         parcels = []
         if active_cities:
             for c in active_cities:
-                p_list = await resolve_street_parcels(c, street, house, conn=conn)
+                p_list = await resolve_street_parcels(c, clean_st, clean_h, conn=conn)
                 if p_list:
                     parcels.extend(p_list)
         else:
             try:
                 async with conn.execute(
                     "SELECT DISTINCT city_name FROM streets WHERE street_name = ? OR street_name LIKE ? LIMIT 3",
-                    (street, f"%{street}%")
+                    (clean_st, f"%{clean_st}%")
                 ) as cur:
                     candidate_cities = [r["city_name"] for r in await cur.fetchall()]
                 for c in candidate_cities:
-                    p_list = await resolve_street_parcels(c, street, house, conn=conn)
+                    p_list = await resolve_street_parcels(c, clean_st, clean_h, conn=conn)
                     if p_list:
                         parcels.extend(p_list)
                         break
@@ -496,13 +511,14 @@ async def search_deals_geo(
 
         if parcels:
             parcels = list(dict.fromkeys(parcels))
-            parcel_clauses = " OR ".join(["(d.gush = ? AND d.helka = ?)"] * len(parcels[:200]))
+            max_parcels = min(len(parcels), 500)
+            parcel_clauses = " OR ".join(["(d.gush = ? AND d.helka = ?)"] * max_parcels)
             query_parts.append(f"({parcel_clauses})")
-            for g, h in parcels[:200]:
+            for g, h in parcels[:max_parcels]:
                 params.extend([g, h])
         else:
             query_parts.append("(d.settlement LIKE ? OR d.addresses LIKE ?)")
-            params.extend([f"%{street}%", f"%{street}%"])
+            params.extend([f"%{clean_st}%", f"%{clean_st}%"])
     
     where_clause = " AND ".join(query_parts) if query_parts else "1=1"
     
@@ -736,6 +752,8 @@ async def omnisearch(
 
     # 3. Streets autocomplete from local streets database
     try:
+        st_clean, _ = clean_street_and_house(q_clean)
+        st_term = st_clean if st_clean else q_clean
         async with conn.execute(
             """SELECT DISTINCT street_name, city_name 
                FROM streets 
@@ -745,7 +763,7 @@ async def omnisearch(
                    is_official DESC,
                    LENGTH(street_name) ASC 
                LIMIT 4""",
-            (f"{q_clean}%", f"%{q_clean}%", f"{q_clean}%")
+            (f"{st_term}%", f"%{st_term}%", f"{st_term}%")
         ) as cur:
             for row in await cur.fetchall():
                 st_name = row["street_name"]
@@ -823,8 +841,11 @@ async def autocomplete_streets(
     if not q_clean:
         return {"data": []}
 
-    prefix = f"{q_clean}%"
-    contains = f"%{q_clean}%"
+    st_clean, _ = clean_street_and_house(q_clean)
+    st_term = st_clean if st_clean else q_clean
+
+    prefix = f"{st_term}%"
+    contains = f"%{st_term}%"
 
     if settlements:
         raw_cities = [s.strip() for s in settlements.split(",") if s.strip()]
@@ -876,47 +897,55 @@ async def get_settlement_profile(
     name: str,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
+    variants = get_city_variants(name)
+    if not variants:
+        variants = [name]
+    placeholders = ",".join(["?"] * len(variants))
+    canonical_name = resolve_canonical_settlement(name)
+
     # Basic stats
     async with conn.execute(
-        """SELECT COUNT(*) as total_deals, MIN(date) as first_deal, MAX(date) as last_deal,
-                  AVG(amount) as avg_price, AVG(area_sqm) as avg_area, settlement_code
-           FROM deals WHERE settlement = ?""",
-        (name,)
+        f"""SELECT COUNT(*) as total_deals, MIN(date) as first_deal, MAX(date) as last_deal,
+                   AVG(amount) as avg_price, AVG(area_sqm) as avg_area, settlement_code
+            FROM deals WHERE settlement IN ({placeholders})""",
+        variants
     ) as cur:
-        stats = dict(await cur.fetchone())
+        row = await cur.fetchone()
+        stats = dict(row) if row else {}
 
     if not stats.get("total_deals"):
-        return {"error": "Settlement not found"}, 404
+        raise HTTPException(status_code=404, detail="Settlement not found")
 
     # Series (yearly medians)
     async with conn.execute(
-        """SELECT year, COUNT(*) as deals, median(amount) as median_amount,
-                  median(area_sqm) as median_area, median(price_per_sqm_normalized) as median_ppsqm_normalized
-           FROM deals WHERE settlement = ? AND year IS NOT NULL
-           GROUP BY year ORDER BY year""",
-        (name,)
+        f"""SELECT year, COUNT(*) as deals, median(amount) as median_amount,
+                   median(area_sqm) as median_area, median(price_per_sqm_normalized) as median_ppsqm_normalized
+            FROM deals WHERE settlement IN ({placeholders}) AND year IS NOT NULL
+            GROUP BY year ORDER BY year""",
+        variants
     ) as cur:
         series = [dict(row) for row in await cur.fetchall()]
 
     # Breakdown by nature
     async with conn.execute(
-        """SELECT nature, COUNT(*) as deals, median(amount) as median_amount,
-                  median(price_per_sqm_normalized) as median_ppsqm_normalized
-           FROM deals WHERE settlement = ? AND nature IS NOT NULL
-           GROUP BY nature ORDER BY deals DESC""",
-        (name,)
+        f"""SELECT nature, COUNT(*) as deals, median(amount) as median_amount,
+                   median(price_per_sqm_normalized) as median_ppsqm_normalized
+            FROM deals WHERE settlement IN ({placeholders}) AND nature IS NOT NULL
+            GROUP BY nature ORDER BY deals DESC""",
+        variants
     ) as cur:
         natures = [dict(row) for row in await cur.fetchall()]
 
     # Recent deals
     async with conn.execute(
-        "SELECT * FROM deals WHERE settlement = ? ORDER BY date DESC LIMIT 50",
-        (name,)
+        f"SELECT * FROM deals WHERE settlement IN ({placeholders}) ORDER BY date DESC LIMIT 50",
+        variants
     ) as cur:
         recent = [dict(row) for row in await cur.fetchall()]
 
     return {
         "settlement": name,
+        "canonical_name": canonical_name,
         "settlement_code": stats.get("settlement_code"),
         "total_deals": stats["total_deals"],
         "first_deal": stats["first_deal"],
@@ -943,9 +972,12 @@ async def get_top_deals(
     clauses = ["d.amount > 0", "d.settlement IS NOT NULL", "d.settlement != ''"]
     params = []
 
+    v_settlement = []
     if settlement:
-        clauses.append("d.settlement = ?")
-        params.append(settlement)
+        v_settlement = get_city_variants(settlement)
+        placeholders = ",".join(["?"] * len(v_settlement))
+        clauses.append(f"d.settlement IN ({placeholders})")
+        params.extend(v_settlement)
 
     if nature:
         if nature == 'apartments':
@@ -959,8 +991,10 @@ async def get_top_deals(
             params.append(nature)
 
     if street:
+        clean_st, _ = clean_street_and_house(street)
+        st_val = clean_st or street
         clauses.append("(pa.full_address LIKE ? OR pa.street LIKE ? OR d.settlement LIKE ?)")
-        params.extend([f"%{street}%", f"%{street}%", f"%{street}%"])
+        params.extend([f"%{st_val}%", f"%{st_val}%", f"%{st_val}%"])
 
     if min_year:
         clauses.append("d.year >= ?")
@@ -1060,7 +1094,7 @@ async def get_top_deals(
         index_hint = ""
         if not settlement and not nature and not street and not min_year and not max_year:
             index_hint = "INDEXED BY idx_deals_ppsqm_calc"
-        elif settlement and not nature and not street and not min_year and not max_year:
+        elif settlement and not nature and not street and not min_year and not max_year and len(v_settlement) == 1:
             index_hint = "INDEXED BY idx_deals_settlement_ppsqm"
 
         deals_ppsqm_clauses = [c.replace("d.", "") for c in clauses]

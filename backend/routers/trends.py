@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from typing import Optional, List
 from database import get_db
 from models import SeriesResponse, SeriesPoint, CompareItem, BreakdownItem
+from settlements import get_city_variants
 import aiosqlite
 
 router = APIRouter(prefix="/api")
@@ -21,21 +22,28 @@ async def get_series(
         if not s_list:
             return {"series": {}}
             
-        series_dict = {}
+        series_dict = {s: [] for s in s_list}
         if not nature and not date_from and not date_to:
             try:
-                placeholders = ",".join(["?"] * len(s_list))
+                all_variants = []
+                variant_to_original = {}
+                for s in s_list:
+                    vars_for_s = get_city_variants(s)
+                    for v in vars_for_s:
+                        all_variants.append(v)
+                        variant_to_original[v] = s
+                all_variants = list(dict.fromkeys(all_variants))
+                placeholders = ",".join(["?"] * len(all_variants))
                 async with conn.execute(
                     f"SELECT settlement, year, deals, median_amount, median_area, median_ppsqm_normalized FROM settlement_series WHERE settlement IN ({placeholders}) ORDER BY year ASC",
-                    s_list
+                    all_variants
                 ) as cur:
                     rows = await cur.fetchall()
-                    for s in s_list:
-                        series_dict[s] = []
                     for r in rows:
                         s_name = r["settlement"]
-                        if s_name in series_dict:
-                            series_dict[s_name].append({
+                        orig_s = variant_to_original.get(s_name)
+                        if orig_s and orig_s in series_dict:
+                            series_dict[orig_s].append({
                                 "year": r["year"],
                                 "deals": r["deals"],
                                 "median_amount": r["median_amount"],
@@ -47,8 +55,10 @@ async def get_series(
                 pass
 
         for s_name in s_list:
-            query_parts = ["settlement = ?"]
-            params = [s_name]
+            expanded = get_city_variants(s_name)
+            placeholders = ",".join(["?"] * len(expanded))
+            query_parts = [f"settlement IN ({placeholders})"]
+            params = list(expanded)
             
             if nature:
                 query_parts.append("nature = ?")
@@ -85,8 +95,10 @@ async def get_series(
     params = []
     
     if settlement:
-        query_parts.append("settlement = ?")
-        params.append(settlement)
+        expanded = get_city_variants(settlement)
+        placeholders = ",".join(["?"] * len(expanded))
+        query_parts.append(f"settlement IN ({placeholders})")
+        params.extend(expanded)
     if nature:
         query_parts.append("nature = ?")
         params.append(nature)
@@ -114,10 +126,12 @@ async def get_series(
 
     # Fast-path for settlement drilldown: use precomputed settlement_series table
     if settlement and not nature and not date_from and not date_to:
+        expanded = get_city_variants(settlement)
+        placeholders = ",".join(["?"] * len(expanded))
         try:
             async with conn.execute(
-                "SELECT year, deals, median_amount, median_area, median_ppsqm_normalized FROM settlement_series WHERE settlement = ? ORDER BY year ASC",
-                (settlement,)
+                f"SELECT year, deals, median_amount, median_area, median_ppsqm_normalized FROM settlement_series WHERE settlement IN ({placeholders}) ORDER BY year ASC",
+                expanded
             ) as cur:
                 rows = await cur.fetchall()
                 if rows:
@@ -227,15 +241,18 @@ async def get_breakdown(
     settlement: str,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
-    query = """
+    expanded = get_city_variants(settlement)
+    placeholders = ",".join(["?"] * len(expanded))
+    query = f"""
         SELECT nature, COUNT(*) as deals, 
                median(amount) as median_amount, 
                median(price_per_sqm_normalized) as median_ppsqm_normalized
         FROM deals 
-        WHERE settlement = ? AND nature IS NOT NULL
+        WHERE settlement IN ({placeholders}) AND nature IS NOT NULL
         GROUP BY nature
         ORDER BY deals DESC
     """
-    async with conn.execute(query, (settlement,)) as cur:
+    async with conn.execute(query, expanded) as cur:
         rows = await cur.fetchall()
         return {"data": [dict(row) for row in rows]}
+

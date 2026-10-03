@@ -21,7 +21,7 @@ import {
 import { Deal } from '../types';
 
 const FILTER_KEYS = [
-  'settlements', 'street', 'gush', 'helka', 'nature',
+  'settlements', 'street', 'house', 'gush', 'helka', 'nature',
   'min_rooms', 'max_rooms', 'min_area', 'max_area',
   'min_amount', 'max_amount', 'min_ppsqm', 'max_ppsqm',
   'date_from', 'date_to', 'min_floor', 'max_floor',
@@ -73,7 +73,7 @@ export default function Search() {
     const params: Record<string, string | number> = {};
     for (const key of FILTER_KEYS) {
       const val = searchParams.get(key);
-      if (val) params[key] = isNaN(Number(val)) || key === 'settlements' || key === 'street' || key.includes('date') || key === 'sort' ? val : Number(val);
+      if (val) params[key] = isNaN(Number(val)) || key === 'settlements' || key === 'street' || key === 'house' || key.includes('date') || key === 'sort' ? val : Number(val);
     }
     const rawSettlement = searchParams.get('settlements') || searchParams.get('settlement');
     if (rawSettlement) {
