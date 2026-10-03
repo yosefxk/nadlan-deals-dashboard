@@ -33,16 +33,23 @@ const YEARS = Array.from({ length: 2026 - 1998 + 1 }, (_, i) => 2026 - i);
 
 function MapBoundsFitter({
   deals,
-  selectedCoords
+  selectedCoords,
+  selectedPoly
 }: {
   deals?: Array<{ lat?: number | null; lon?: number | null }>;
   selectedCoords?: [number, number] | null;
+  selectedPoly?: [number, number][] | null;
 }) {
   const map = useMap();
 
   useEffect(() => {
+    if (selectedPoly && selectedPoly.length > 0) {
+      const bounds = L.latLngBounds(selectedPoly);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+      return;
+    }
     if (selectedCoords) {
-      map.setView(selectedCoords, 12, { animate: true });
+      map.setView(selectedCoords, 13, { animate: true });
       return;
     }
     if (deals && deals.length > 0) {
@@ -52,7 +59,7 @@ function MapBoundsFitter({
         map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
       }
     }
-  }, [deals, selectedCoords, map]);
+  }, [deals, selectedCoords, selectedPoly, map]);
 
   return null;
 }
@@ -74,9 +81,16 @@ export default function MapPage() {
     searchParams.get('year_to') ? Number(searchParams.get('year_to')) : undefined
   );
 
-  // Selected settlement in sidebar
-  const [selectedSettlement, setSelectedSettlement] = useState<string | null>(null);
+  // Selected settlement in sidebar or via URL parameter
+  const settlementParam = searchParams.get('settlement');
+  const [selectedSettlement, setSelectedSettlement] = useState<string | null>(settlementParam || null);
   const [hoveredSettlement, setHoveredSettlement] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settlementParam) {
+      setSelectedSettlement(settlementParam);
+    }
+  }, [settlementParam]);
 
   // 1. Fetch National Heatmap Summary
   const { data: mapData, isLoading: mapLoading } = useQuery({
@@ -94,7 +108,7 @@ export default function MapPage() {
   const { data: polygonsData, isLoading: polygonsLoading } = useQuery({
     queryKey: ['settlementPolygons'],
     queryFn: fetchSettlementPolygons,
-    staleTime: Infinity
+    staleTime: 1000 * 60 * 5
   });
 
   // 2. Fetch Deals for Search Results Mode (Option 5)
@@ -166,6 +180,20 @@ export default function MapPage() {
     const found = mapData.data.find((s) => s.settlement === selectedSettlement);
     return found ? ([found.lat, found.lon] as [number, number]) : null;
   }, [selectedSettlement, mapData]);
+
+  const selectedPoly = useMemo(() => {
+    if (!selectedSettlement || !polygonsData) return null;
+    return (
+      polygonsData[selectedSettlement] ||
+      polygonsData[selectedSettlement.replace(' - ', ' -')] ||
+      polygonsData[selectedSettlement.replace(' -', ' - ')] ||
+      polygonsData[selectedSettlement.replace('יי', 'י')] ||
+      polygonsData[selectedSettlement.replace('י', 'יי')] ||
+      polygonsData[selectedSettlement.replace('קריית ', 'קרית ')] ||
+      polygonsData[selectedSettlement.replace('קרית ', 'קריית ')] ||
+      null
+    );
+  }, [selectedSettlement, polygonsData]);
 
   return (
     <div className="space-y-4">
@@ -311,6 +339,27 @@ export default function MapPage() {
                 איפוס
               </button>
             )}
+
+            {/* Quick Settlement Jump */}
+            <div className="flex items-center gap-1.5 mr-auto">
+              <Search size={14} className="text-slate-400" />
+              <input
+                type="text"
+                placeholder="קפיצה ליישוב במפה..."
+                list="map-settlements-list"
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-indigo-500 w-36 sm:w-44 text-right"
+                value={selectedSettlement || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedSettlement(val);
+                }}
+              />
+              <datalist id="map-settlements-list">
+                {mapData?.data.map((s) => (
+                  <option key={s.settlement} value={s.settlement} />
+                ))}
+              </datalist>
+            </div>
           </div>
 
           {/* Color Legend */}
@@ -416,7 +465,7 @@ export default function MapPage() {
             {/* In National Mode: Render Outlined City Polygons for all ~1,000+ Settlements */}
             {!isDealsMode && (
               <>
-                <MapBoundsFitter selectedCoords={selectedCoords} />
+                <MapBoundsFitter selectedCoords={selectedCoords} selectedPoly={selectedPoly} />
                 {mapData?.data.map((s) => {
                   const val = s[metric];
                   const color = getColor(val);

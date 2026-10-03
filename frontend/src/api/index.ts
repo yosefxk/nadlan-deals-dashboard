@@ -138,5 +138,5 @@ export async function fetchMapSummary(params?: { nature?: string; year_from?: nu
 }
 
 export async function fetchSettlementPolygons(): Promise<Record<string, any>> {
-  return fetchJson<Record<string, any>>(`${API_BASE}/map/polygons`);
+  return fetchJson<Record<string, any>>(`${API_BASE}/map/polygons?v=20261003_v2`);
 }
