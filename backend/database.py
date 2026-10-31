@@ -24,11 +24,25 @@ class MedianAggregate:
 class Database:
     def __init__(self, db_path):
         self.db_path = db_path
+        self._initialized = False
+
+    async def init_db(self):
+        """Initializes WAL mode and ensures indexes exist once during startup."""
+        if os.path.exists(self.db_path):
+            conn = await aiosqlite.connect(self.db_path)
+            try:
+                await conn.execute("PRAGMA journal_mode=WAL")
+                await conn.execute("PRAGMA synchronous=NORMAL")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_parcel_coords ON parcel_addresses(lat, lon)")
+                await conn.commit()
+            except Exception:
+                pass
+            finally:
+                await conn.close()
+        self._initialized = True
 
     async def get_connection(self):
         conn = await aiosqlite.connect(self.db_path)
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_parcel_coords ON parcel_addresses(lat, lon)")
         await conn._execute(conn._conn.create_aggregate, "median", 1, MedianAggregate)
         conn.row_factory = aiosqlite.Row
         return conn

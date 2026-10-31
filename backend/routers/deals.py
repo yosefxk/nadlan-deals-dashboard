@@ -8,10 +8,22 @@ import httpx
 import re
 import json
 from pathlib import Path
+import asyncio
+from collections import OrderedDict
 
 router = APIRouter(prefix="/api")
 
-_street_parcels_cache: dict[tuple, list[tuple[str, str]]] = {}
+class BoundedDict(OrderedDict):
+    def __init__(self, maxsize=1000):
+        super().__init__()
+        self.maxsize = maxsize
+
+    def __setitem__(self, key, value):
+        if len(self) >= self.maxsize and key not in self:
+            self.popitem(last=False)
+        super().__setitem__(key, value)
+
+_street_parcels_cache = BoundedDict(maxsize=1000)
 
 async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None, conn: Optional[aiosqlite.Connection] = None) -> list[tuple[str, str]]:
     clean_st, clean_h = clean_street_and_house(street, house)
@@ -560,32 +572,61 @@ async def search_deals_geo(
             h_part = f" {row['house_num']}" if row.get("house_num") else ""
             row["full_address"] = f"{row['street']}{h_part}, {row.get('settlement') or ''}".strip(", ")
         
-    resolved_count = 0
+    # Deduplicate unique (gush, helka) pairs needing resolution (up to 10 unique pairs)
+    unique_pairs = []
+    seen_pairs = set()
     for row in data:
         if row.get("lat") is None and row.get("gush") and row.get("helka"):
-            if resolved_count >= 10:
-                continue
-            g = row["gush"]
-            h = row["helka"]
+            pair_key = (str(row["gush"]), str(row["helka"]))
+            if pair_key not in seen_pairs:
+                seen_pairs.add(pair_key)
+                unique_pairs.append((row["gush"], row["helka"], row.get("settlement")))
+                if len(unique_pairs) >= 10:
+                    break
+
+    if unique_pairs:
+        async def fetch_parcel(client: httpx.AsyncClient, g, h, settlement):
             try:
-                async with httpx.AsyncClient(timeout=1.0) as client:
-                    resp = await client.get(f"https://www.over.org.il/api/nadlan/parcel/{g}/{h}")
-                    if resp.status_code == 200:
-                        pdata = resp.json()
-                        lat = pdata.get('lat')
-                        lon = pdata.get('lon')
-                        street_r = pdata.get('street')
-                        if lat and lon:
-                            row["lat"] = lat
-                            row["lon"] = lon
-                            await conn.execute(
-                                "INSERT OR IGNORE INTO parcel_addresses (gush, helka, lat, lon, street, settlement) VALUES (?, ?, ?, ?, ?, ?)",
-                                (g, h, lat, lon, street_r, row.get("settlement"))
-                            )
-                            await conn.commit()
-                            resolved_count += 1
+                resp = await client.get(f"https://www.over.org.il/api/nadlan/parcel/{g}/{h}")
+                if resp.status_code == 200:
+                    pdata = resp.json()
+                    lat = pdata.get('lat')
+                    lon = pdata.get('lon')
+                    street_r = pdata.get('street')
+                    if lat and lon:
+                        return (g, h, lat, lon, street_r, settlement)
             except Exception:
                 pass
+            return None
+
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            fetch_tasks = [fetch_parcel(client, g, h, s) for g, h, s in unique_pairs]
+            results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+        resolved_map = {}
+        insert_records = []
+        for res in results:
+            if isinstance(res, tuple) and res is not None:
+                g, h, lat, lon, street_r, settlement = res
+                resolved_map[(str(g), str(h))] = (lat, lon)
+                insert_records.append((g, h, lat, lon, street_r, settlement))
+
+        if insert_records:
+            for record in insert_records:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO parcel_addresses (gush, helka, lat, lon, street, settlement) VALUES (?, ?, ?, ?, ?, ?)",
+                    record
+                )
+            await conn.commit()
+
+        if resolved_map:
+            for row in data:
+                if row.get("lat") is None and row.get("gush") and row.get("helka"):
+                    pair_key = (str(row["gush"]), str(row["helka"]))
+                    if pair_key in resolved_map:
+                        lat, lon = resolved_map[pair_key]
+                        row["lat"] = lat
+                        row["lon"] = lon
 
     # Fallback to settlement coordinates if parcel lat/lon is missing
     coord_file = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
@@ -692,10 +733,20 @@ async def get_parcel_deals(
     helka: str,
     conn: aiosqlite.Connection = Depends(get_db)
 ):
-    query = "SELECT * FROM deals WHERE gush = ? AND helka = ? ORDER BY date DESC"
+    query = """
+        SELECT d.*, pa.street, pa.house_num, pa.full_address, pa.lat, pa.lon
+        FROM deals d
+        LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)
+        WHERE d.gush = ? AND d.helka = ?
+        ORDER BY d.date DESC
+    """
     async with conn.execute(query, (gush, helka)) as cur:
         rows = await cur.fetchall()
         data = [dict(row) for row in rows]
+        for row in data:
+            if not row.get("full_address") and row.get("street"):
+                h_part = f" {row['house_num']}" if row.get("house_num") else ""
+                row["full_address"] = f"{row['street']}{h_part}, {row.get('settlement') or ''}".strip(", ")
         return {"data": data, "total": len(data), "gush": gush, "helka": helka}
 
 @router.get("/omnisearch")
@@ -1052,7 +1103,17 @@ async def get_top_deals(
 
     # 2. Count total (avoid joining parcel_addresses unless street filter is active)
     if not settlement and not nature and not street and not min_year and not max_year and sort != "ppsqm_desc":
-        total = 3844200
+        try:
+            async with conn.execute("SELECT total_deals FROM kpi_stats LIMIT 1") as cur:
+                kpi_row = await cur.fetchone()
+                total = kpi_row["total_deals"] if kpi_row and kpi_row["total_deals"] else 0
+        except Exception:
+            try:
+                async with conn.execute("SELECT COUNT(*) as cnt FROM deals") as cur:
+                    c_row = await cur.fetchone()
+                    total = c_row["cnt"] if c_row and c_row["cnt"] else 0
+            except Exception:
+                total = 0
     else:
         from_table = "deals d" if not street else "deals d LEFT JOIN parcel_addresses pa ON (d.gush = pa.gush AND d.helka = pa.helka)"
         count_query = f"SELECT COUNT(*) as cnt FROM {from_table} WHERE {where_clause}"

@@ -15,6 +15,7 @@ import logging
 import sqlite3
 import sys
 import time
+import re
 from pathlib import Path
 
 import httpx
@@ -144,6 +145,8 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str):
 
 def fetch_batch_sql(client: httpx.Client, last_row_hash: str | None = None) -> list[dict]:
     if last_row_hash:
+        if not re.fullmatch(r"[a-zA-Z0-9_\-\.]+", str(last_row_hash)):
+            raise ValueError(f"Invalid last_row_hash format: {last_row_hash}")
         sql = f"SELECT * FROM {TABLE_NAME} WHERE row_hash > '{last_row_hash}' ORDER BY row_hash LIMIT {BATCH_SIZE}"
     else:
         sql = f"SELECT * FROM {TABLE_NAME} ORDER BY row_hash LIMIT {BATCH_SIZE}"

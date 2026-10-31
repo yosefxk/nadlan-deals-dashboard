@@ -1,12 +1,19 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager
 import os
 
 from routers import deals, stats, trends, map
+from database import db_instance
 
-app = FastAPI(title="Nadlan Deals Dashboard")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await db_instance.init_db()
+    yield
+
+app = FastAPI(title="Nadlan Deals Dashboard", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,8 +39,13 @@ if os.path.exists(frontend_dist):
     @app.api_route("/{full_path:path}", methods=["GET"])
     async def catch_all(request: Request, full_path: str):
         if full_path.startswith("api/"):
-            return None # 404 for API
+            raise HTTPException(status_code=404, detail="API route not found")
         index_file = os.path.join(frontend_dist, "index.html")
         if os.path.exists(index_file):
             return FileResponse(index_file)
         return {"error": "Frontend not found"}
+else:
+    @app.api_route("/api/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+    async def missing_api(full_path: str):
+        raise HTTPException(status_code=404, detail="API route not found")
+

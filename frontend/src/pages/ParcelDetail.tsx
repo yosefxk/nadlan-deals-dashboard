@@ -139,7 +139,7 @@ export default function ParcelDetail() {
                       {deal.date}
                     </td>
                     <td className="py-3 px-4 text-xs font-medium text-slate-800">
-                      {deal.addresses?.[0] || '—'}
+                      {deal.full_address || deal.street || deal.addresses?.[0] || '—'}
                     </td>
                     <td className="py-3 px-4 text-xs font-medium text-slate-700">
                       {deal.nature || '—'}

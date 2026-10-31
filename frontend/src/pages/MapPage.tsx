@@ -425,11 +425,11 @@ export default function MapPage() {
                             {deal.settlement}
                           </div>
                           <div className="text-xs text-slate-500 mb-1">
-                            {deal.addresses && deal.addresses.length > 0
+                            {deal.full_address || deal.street || (deal.addresses && deal.addresses.length > 0
                               ? deal.addresses[0]
                               : deal.gush && deal.helka
                               ? `גוש ${deal.gush} חלקה ${deal.helka}`
-                              : ''}
+                              : '')}
                           </div>
                           <div className="text-indigo-600 font-bold text-base my-1">
                             ₪{deal.amount?.toLocaleString('he-IL') || '-'}
