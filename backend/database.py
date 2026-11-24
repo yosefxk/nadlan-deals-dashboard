@@ -1,25 +1,41 @@
 import aiosqlite
+from array import array
 import os
+import random
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'deals.db')
 
 class MedianAggregate:
+    """Exact median up to MAX_SAMPLES rows using compact C-doubles, falling back
+    to uniform reservoir sampling above MAX_SAMPLES so large aggregations stay
+    under ~200 KB instead of allocating hundreds of MB in Python lists."""
+    MAX_SAMPLES = 25000
+
     def __init__(self):
-        self.values = []
+        self.values = array('d')
+        self.count = 0
 
     def step(self, value):
-        if value is not None:
-            self.values.append(value)
+        if value is None:
+            return
+        self.count += 1
+        if len(self.values) < self.MAX_SAMPLES:
+            self.values.append(float(value))
+        else:
+            idx = random.randrange(self.count)
+            if idx < self.MAX_SAMPLES:
+                self.values[idx] = float(value)
 
     def finalize(self):
         if not self.values:
             return None
-        self.values.sort()
-        n = len(self.values)
+        sorted_vals = sorted(self.values)
+        self.values = array('d')  # Release buffer promptly
+        n = len(sorted_vals)
+        mid = n // 2
         if n % 2 == 1:
-            return self.values[n // 2]
-        else:
-            return (self.values[n // 2 - 1] + self.values[n // 2]) / 2.0
+            return sorted_vals[mid]
+        return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
 
 class Database:
     def __init__(self, db_path):

@@ -118,9 +118,7 @@ async def get_settlement_polygons():
         content=_cached_polygons_bytes,
         media_type="application/json",
         headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
+            "Cache-Control": "public, max-age=86400"
         }
     )
 

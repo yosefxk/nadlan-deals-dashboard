@@ -25,6 +25,23 @@ class BoundedDict(OrderedDict):
 
 _street_parcels_cache = BoundedDict(maxsize=1000)
 
+# Load settlement coordinates once at module import instead of reading from disk per request
+_COORD_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
+_CITY_COORDS: dict = {}
+if _COORD_FILE.exists():
+    try:
+        with open(_COORD_FILE, "r", encoding="utf-8") as _f:
+            _CITY_COORDS = json.load(_f)
+    except Exception:
+        _CITY_COORDS = {}
+
+def _lookup_city_coords(settlement_name: str):
+    return (
+        _CITY_COORDS.get(settlement_name)
+        or _CITY_COORDS.get(settlement_name.strip().replace(" -", "-").replace("- ", "-"))
+        or _CITY_COORDS.get(settlement_name.split("-")[0].strip())
+    )
+
 async def resolve_street_parcels(settlement: str, street: str, house: Optional[str] = None, conn: Optional[aiosqlite.Connection] = None) -> list[tuple[str, str]]:
     clean_st, clean_h = clean_street_and_house(street, house)
     if not clean_st:
@@ -628,20 +645,10 @@ async def search_deals_geo(
                         row["lat"] = lat
                         row["lon"] = lon
 
-    # Fallback to settlement coordinates if parcel lat/lon is missing
-    coord_file = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
-    city_coords = {}
-    if coord_file.exists():
-        try:
-            with open(coord_file, "r", encoding="utf-8") as f:
-                city_coords = json.load(f)
-        except Exception:
-            pass
-
+    # Fallback to cached settlement coordinates if parcel lat/lon is missing
     for row in data:
         if row.get("lat") is None and row.get("settlement"):
-            s_name = row["settlement"]
-            coords = city_coords.get(s_name) or city_coords.get(s_name.strip().replace(" -", "-").replace("- ", "-")) or city_coords.get(s_name.split("-")[0].strip())
+            coords = _lookup_city_coords(row["settlement"])
             if coords:
                 # Add slight random jitter (up to ~50m) so multiple deals in the same city don't completely overlap
                 import random
@@ -662,7 +669,7 @@ async def search_deals_geo(
 async def get_nearby_deals(
     lat: float,
     lon: float,
-    radius_km: float = 1.0,
+    radius_km: float = Query(1.0, gt=0, le=50.0),
     limit: int = Query(25, le=50),
     nature: Optional[str] = None,
     min_date: Optional[str] = None,
@@ -692,6 +699,8 @@ async def get_nearby_deals(
     if min_date:
         query += " AND d.date >= ?"
         params.append(min_date)
+
+    query += " ORDER BY d.date DESC LIMIT 2000"
 
     async with conn.execute(query, params) as cur:
         rows = await cur.fetchall()
@@ -780,26 +789,39 @@ async def omnisearch(
             "url": f"/search?gush={q_clean}"
         })
 
-    # 2. Local Database: Settlements matching
+    # 2. Local Database: Settlements matching (use precomputed settlements_summary instead of 3.8M-row deals scan)
     city_variants = get_city_variants(q_clean)
     settlement_clauses = " OR ".join(["settlement LIKE ?"] * len(city_variants))
     settlement_params = [f"%{v}%" for v in city_variants]
-    async with conn.execute(
-        f"""SELECT settlement, COUNT(*) as deals 
-           FROM deals 
-           WHERE {settlement_clauses} 
-           GROUP BY settlement 
-           ORDER BY deals DESC LIMIT 4""",
-        settlement_params
-    ) as cur:
-        for row in await cur.fetchall():
-            results.append({
-                "category": "יישוב / עיר",
-                "type": "settlement",
-                "title": row["settlement"],
-                "subtitle": f"{row['deals']:,} עסקאות מדווחות",
-                "url": f"/settlement/{row['settlement']}"
-            })
+    settlement_rows = []
+    try:
+        async with conn.execute(
+            f"""SELECT settlement, SUM(total_deals) as deals
+               FROM settlements_summary
+               WHERE {settlement_clauses}
+               GROUP BY settlement
+               ORDER BY deals DESC LIMIT 4""",
+            settlement_params
+        ) as cur:
+            settlement_rows = await cur.fetchall()
+    except Exception:
+        async with conn.execute(
+            f"""SELECT settlement, COUNT(*) as deals
+               FROM deals
+               WHERE {settlement_clauses}
+               GROUP BY settlement
+               ORDER BY deals DESC LIMIT 4""",
+            settlement_params
+        ) as cur:
+            settlement_rows = await cur.fetchall()
+    for row in settlement_rows:
+        results.append({
+            "category": "יישוב / עיר",
+            "type": "settlement",
+            "title": row["settlement"],
+            "subtitle": f"{row['deals']:,} עסקאות מדווחות",
+            "url": f"/settlement/{row['settlement']}"
+        })
 
     # 3. Streets autocomplete from local streets database
     try:
@@ -829,23 +851,35 @@ async def omnisearch(
     except Exception:
         pass
 
-    # 4. Local Database: Property natures matching
-    async with conn.execute(
-        """SELECT nature, COUNT(*) as deals 
-           FROM deals 
-           WHERE nature LIKE ? 
-           GROUP BY nature 
-           ORDER BY deals DESC LIMIT 2""",
-        (f"%{q_clean}%",)
-    ) as cur:
-        for row in await cur.fetchall():
-            results.append({
-                "category": "סוג נכס",
-                "type": "nature",
-                "title": row["nature"],
-                "subtitle": f"סינון לפי {row['deals']:,} עסקאות מסוג זה",
-                "url": f"/search?nature={row['nature']}"
-            })
+    # 4. Local Database: Property natures matching (use precomputed natures_summary)
+    nature_rows = []
+    try:
+        async with conn.execute(
+            """SELECT nature, deals
+               FROM natures_summary
+               WHERE nature LIKE ?
+               ORDER BY deals DESC LIMIT 2""",
+            (f"%{q_clean}%",)
+        ) as cur:
+            nature_rows = await cur.fetchall()
+    except Exception:
+        async with conn.execute(
+            """SELECT nature, COUNT(*) as deals
+               FROM deals
+               WHERE nature LIKE ?
+               GROUP BY nature
+               ORDER BY deals DESC LIMIT 2""",
+            (f"%{q_clean}%",)
+        ) as cur:
+            nature_rows = await cur.fetchall()
+    for row in nature_rows:
+        results.append({
+            "category": "סוג נכס",
+            "type": "nature",
+            "title": row["nature"],
+            "subtitle": f"סינון לפי {row['deals']:,} עסקאות מסוג זה",
+            "url": f"/search?nature={row['nature']}"
+        })
 
     # 5. Universal search fallback
     results.append({
@@ -869,17 +903,30 @@ async def autocomplete(
     variants = get_city_variants(q_clean)
     clauses = " OR ".join(["settlement LIKE ?"] * len(variants))
     params = [f"%{v}%" for v in variants]
-    query = f"""
-        SELECT settlement, COUNT(*) as deals 
-        FROM deals 
-        WHERE {clauses}
-        GROUP BY settlement 
-        ORDER BY deals DESC 
-        LIMIT 10
-    """
-    async with conn.execute(query, params) as cur:
-        rows = await cur.fetchall()
-        return {"data": [dict(row) for row in rows]}
+    try:
+        query = f"""
+            SELECT settlement, SUM(total_deals) as deals
+            FROM settlements_summary
+            WHERE {clauses}
+            GROUP BY settlement
+            ORDER BY deals DESC
+            LIMIT 10
+        """
+        async with conn.execute(query, params) as cur:
+            rows = await cur.fetchall()
+            return {"data": [dict(row) for row in rows]}
+    except Exception:
+        query = f"""
+            SELECT settlement, COUNT(*) as deals
+            FROM deals
+            WHERE {clauses}
+            GROUP BY settlement
+            ORDER BY deals DESC
+            LIMIT 10
+        """
+        async with conn.execute(query, params) as cur:
+            rows = await cur.fetchall()
+            return {"data": [dict(row) for row in rows]}
 
 @router.get("/streets/autocomplete")
 async def autocomplete_streets(
@@ -1081,20 +1128,11 @@ async def get_top_deals(
         rows = await cur.fetchall()
         data = [dict(row) for row in rows]
 
-    # City coordinates fallback for any top deals missing precise coordinates
-    coord_file = Path(__file__).resolve().parent.parent.parent / "data" / "settlement_coordinates.json"
-    city_coords = {}
-    if coord_file.exists():
-        try:
-            with open(coord_file, "r", encoding="utf-8") as f:
-                city_coords = json.load(f)
-        except Exception:
-            pass
-
+    # City coordinates fallback for any top deals missing precise coordinates (using module-level cache)
     for row in data:
         if not row.get("lat") and row.get("settlement"):
             s_name = row["settlement"]
-            coords = city_coords.get(s_name) or city_coords.get(s_name.strip().replace(" -", "-").replace("- ", "-")) or city_coords.get(s_name.split("-")[0].strip())
+            coords = _lookup_city_coords(s_name)
             if coords:
                 row["lat"] = coords[0]
                 row["lon"] = coords[1]
@@ -1104,9 +1142,9 @@ async def get_top_deals(
     # 2. Count total (avoid joining parcel_addresses unless street filter is active)
     if not settlement and not nature and not street and not min_year and not max_year and sort != "ppsqm_desc":
         try:
-            async with conn.execute("SELECT total_deals FROM kpi_stats LIMIT 1") as cur:
+            async with conn.execute("SELECT deals FROM kpi_stats WHERE id = 1") as cur:
                 kpi_row = await cur.fetchone()
-                total = kpi_row["total_deals"] if kpi_row and kpi_row["total_deals"] else 0
+                total = kpi_row["deals"] if kpi_row and kpi_row["deals"] else 0
         except Exception:
             try:
                 async with conn.execute("SELECT COUNT(*) as cnt FROM deals") as cur:
@@ -1189,7 +1227,7 @@ async def get_top_deals(
     for h_target in (highest_deal, highest_ppsqm_deal):
         if h_target and not h_target.get("lat") and h_target.get("settlement"):
             s_name = h_target["settlement"]
-            coords = city_coords.get(s_name) or city_coords.get(s_name.strip().replace(" -", "-").replace("- ", "-")) or city_coords.get(s_name.split("-")[0].strip())
+            coords = _lookup_city_coords(s_name)
             if coords:
                 h_target["lat"] = coords[0]
                 h_target["lon"] = coords[1]
